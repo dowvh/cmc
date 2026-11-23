@@ -159,10 +159,9 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 const CAPAS="capas/";
 
 // Endereço do SERVIDOR (o que roda o server.js), não do GitHub Pages.
-// Exemplo: "https://cinenoite.onrender.com" (https uma vez só, sem barra no final).
 // Rodando tudo no seu PC com o server.js: deixe vazio "".
-const MEDIA_BASE="https://SEU-SERVIDOR-AQUI";
 const MEDIA_BASE="https://cmc-3ke1.onrender.com";
+const MEDIA=MEDIA_BASE.replace(/\/+$/,"");
 const MEDIA_OK=MEDIA==="" || !/SEU-SERVIDOR/.test(MEDIA);
 
 const M=[
