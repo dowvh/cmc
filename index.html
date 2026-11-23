@@ -159,10 +159,15 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 const CAPAS="capas/";
 
 // Endereço do SERVIDOR (o que roda o server.js), não do GitHub Pages.
+// Exemplo: "https://cinenoite.onrender.com" (https uma vez só, sem barra no final).
 // Rodando tudo no seu PC com o server.js: deixe vazio "".
 const MEDIA_BASE="https://cmc-3ke1.onrender.com";
 const MEDIA=MEDIA_BASE.replace(/\/+$/,"");
 const MEDIA_OK=MEDIA==="" || !/SEU-SERVIDOR/.test(MEDIA);
+
+// Link da planilha do Google publicada como CSV (veja o passo a passo).
+// Vazio "" = usa só a lista de filmes que está logo abaixo.
+const PLANILHA="";
 
 const M=[
 {t:"Noite em Neon",g:"Ficção",y:2024,m:124,a:"14",s:4.7,h:285,x:"70%",p:"Em uma cidade que nunca apaga as luzes, uma programadora descobre uma mensagem escondida no brilho dos letreiros."},
@@ -201,7 +206,7 @@ mute:'<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path 
 fs:'<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M5 5h5v2H7v3H5V5zm9 0h5v5h-2V7h-3V5zM5 14h2v3h3v2H5v-5zm12 0h2v5h-5v-2h3v-3z"/></svg>'
 };
 
-const meta=o=>'<span class="star">★ '+o.s.toFixed(1)+'</span><span>'+o.y+'</span><span>'+dur(o.m)+'</span><span>'+o.g+'</span><span>'+o.a+' anos</span>';
+const meta=o=>''+(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+o.y+'</span><span>'+dur(o.m)+'</span><span>'+o.g+'</span><span>'+o.a+' anos</span>';
 
 let favs=new Set();
 try{favs=new Set(JSON.parse(localStorage.getItem("cn-favs")||"[]"))}catch(e){}
@@ -250,7 +255,7 @@ function renderHero(){
 
 function renderGrid(){
   const L=M.filter(o=>(filter==="Todos"||(filter==="Minha lista"?favs.has(o.id):o.g===filter))&&norm(o.t).includes(norm(q)));
-  $("#grid").innerHTML=L.map(o=>'<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+o.t+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+sty(o)+'">'+(o.img?'':o.t)+'</div><h3>'+o.t+'</h3><div class="meta"><span class="star">★ '+o.s.toFixed(1)+'</span><span>'+o.y+'</span><span>'+o.g+'</span></div></button><button class="fav" data-fav="'+o.id+'" aria-pressed="'+favs.has(o.id)+'" aria-label="Minha lista: '+o.t+'">'+ICON.heart+'</button></article>').join("");
+  $("#grid").innerHTML=L.map(o=>'<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+o.t+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+sty(o)+'">'+(o.img?'':o.t)+'</div><h3>'+o.t+'</h3><div class="meta">'+(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+o.y+'</span><span>'+o.g+'</span></div></button><button class="fav" data-fav="'+o.id+'" aria-pressed="'+favs.has(o.id)+'" aria-label="Minha lista: '+o.t+'">'+ICON.heart+'</button></article>').join("");
   const e=$("#empty");
   e.hidden=L.length>0;
   e.textContent=filter==="Minha lista"&&!q?"Sua lista está vazia. Toque no coração de um filme para salvá-lo aqui.":"Nenhum filme encontrado. Tente outro nome ou escolha outra categoria.";
@@ -614,7 +619,72 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&$("#modal").classList.contains("open"))closeMovie();
 });
 
+/* ===== Lista de filmes pela planilha do Google ===== */
+const driveId=u=>{u=String(u||"").trim();const m=u.match(/\/d\/([-\w]+)|[?&]id=([-\w]+)/);return m?(m[1]||m[2]):u};
+const hueOf=t=>{let h=0;for(const c of t)h=(h*31+c.charCodeAt(0))%360;return h};
+
+function parseCSV(t){
+  t=t.replace(/^\uFEFF/,"");
+  const rows=[];let r=[],c="",q=false;
+  for(let i=0;i<t.length;i++){
+    const ch=t[i];
+    if(q){
+      if(ch==='"'){if(t[i+1]==='"'){c+='"';i++}else q=false}
+      else c+=ch;
+    }else if(ch==='"')q=true;
+    else if(ch===","){r.push(c);c=""}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&t[i+1]==="\n")i++;r.push(c);rows.push(r);r=[];c=""}
+    else c+=ch;
+  }
+  if(c!==""||r.length){r.push(c);rows.push(r)}
+  return rows;
+}
+
+function filmesDaPlanilha(csv){
+  const rows=parseCSV(csv).filter(r=>r.some(c=>c.trim()));
+  if(rows.length<2)return [];
+  const head=rows[0].map(c=>norm(c.trim()));
+  const col=(r,n)=>{const i=head.indexOf(n);return i<0?"":(r[i]||"").trim()};
+  return rows.slice(1).map(r=>{
+    const t=col(r,"titulo");
+    if(!t)return null;
+    const cor=col(r,"cor");
+    const o={
+      t,
+      g:col(r,"genero")||"Drama",
+      y:+col(r,"ano")||"",
+      m:+col(r,"minutos")||100,
+      a:col(r,"idade")||"12",
+      s:parseFloat(col(r,"nota").replace(",","."))||0,
+      h:cor!==""&&!isNaN(+cor)?+cor:hueOf(t),
+      x:(20+hueOf(t+"x")%60)+"%",
+      p:col(r,"sinopse")
+    };
+    const capa=col(r,"capa"),leg=col(r,"legenda"),dr=col(r,"drive");
+    if(capa)o.img=/^(https?|file):/.test(capa)?capa:CAPAS+capa;
+    if(dr)o.driveId=driveId(dr);
+    if(leg)o.subtitles=[{src:/^https?:/.test(leg)?leg:"legendas/"+leg,lang:"pt-BR",label:"Português"}];
+    return o;
+  }).filter(Boolean);
+}
+
+async function carregarPlanilha(){
+  if(!PLANILHA)return;
+  try{
+    const r=await fetch(PLANILHA,{cache:"no-store"});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const lista=filmesDaPlanilha(await r.text());
+    if(!lista.length)return;
+    lista.forEach((o,i)=>{o.id=i;o.src=""});
+    M.splice(0,M.length,...lista);
+    renderAll();
+  }catch(e){
+    console.warn("Não foi possível ler a planilha; usando a lista padrão.",e);
+  }
+}
+
 renderAll();
+carregarPlanilha();
 </script>
 </body>
 </html>
