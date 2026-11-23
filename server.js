@@ -38,13 +38,9 @@ const auth = new GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/drive.readonly"]
 });
 
-// Somente estes arquivos do Drive podem ser transmitidos.
-// Ao adicionar um filme novo, inclua o ID aqui e no driveId do HTML.
-const FILMES = new Set([
-  "1Jv6qcG-RcOF3BNNcHtYmo-Sva-cyGJ0w",
-  "1KGCfu5dNcEFrwiFWBcyNRF4wmJf60T3j",
-  "1aXm38oSTsh_vhTTY40nqTJbRqGN5I4yQ"
-]);
+// O servidor só lê arquivos do Drive que foram compartilhados com a conta de serviço
+// (o e-mail "client_email" da chave). Compartilhe apenas a pasta dos filmes.
+const ID_VALIDO = /^[A-Za-z0-9_-]{15,80}$/;
 
 // Endereço do site que pode incorporar os vídeos, ex.: https://dowvh.github.io
 // Sem a variável, qualquer site pode usar a rota /media.
@@ -189,7 +185,7 @@ function createRangeStream(source, start, length) {
 app.get("/media/:id", async (req, res) => {
   const id = req.params.id;
 
-  if (!FILMES.has(id)) {
+  if (!ID_VALIDO.test(id)) {
     return res.status(404).send("Filme não encontrado");
   }
 
