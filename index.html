@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex, nofollow">
 <!-- Se ativar a PLANILHA, inclua em connect-src: https://docs.google.com https://*.googleusercontent.com
      Se trocar o endereço do servidor de vídeo, inclua o novo em media-src. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https://desktop-g2jklud.taile9cab4.ts.net https://archive.org https://*.archive.org https://cmc-3ke1.onrender.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https://desktop-g2jklud.taile9cab4.ts.net https://archive.org https://*.archive.org https://cmc-3ke1.onrender.com; connect-src 'self' https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>CineNoite — Filmes online</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -338,9 +338,12 @@ function setPlay(on){
   if(!vid)return;
 
   if(on){
-    const p=vid.play();
-    if(p&&p.catch)p.catch(()=>{
-      $("#status").textContent="O navegador não conseguiu iniciar o vídeo. Tente novamente em instantes.";
+    const player=vid;
+    const p=player.play();
+    if(p&&p.catch)p.catch(error=>{
+      if(vid!==player)return;
+      $("#status").textContent="Não foi possível iniciar a reprodução. Toque em Reproduzir para tentar novamente.";
+      console.warn("Falha ao iniciar reprodução:",error);
     });
   }else{
     vid.pause();
@@ -378,7 +381,15 @@ function openMovie(o){
 
   const s=$("#screen");
   s.setAttribute("style",sty(o));
-  s.querySelectorAll("video").forEach(v=>{v.pause();v.remove()});
+  // Desconecta completamente o player anterior antes de criar outro.
+  // Isso evita que downloads/eventos antigos concorram com o próximo filme.
+  s.querySelectorAll("video").forEach(v=>{
+    v.pause();
+    v.removeAttribute("src");
+    v.querySelectorAll("source,track").forEach(el=>el.remove());
+    try{v.load()}catch(e){}
+    v.remove();
+  });
   vid=null;
 
   $("#status").textContent="";
@@ -392,6 +403,8 @@ function openMovie(o){
     const v=document.createElement("video");
     v.src=url;
     v.playsInline=true;
+    v.setAttribute("playsinline","");
+    v.setAttribute("webkit-playsinline","");
     v.preload="metadata";
     v.controls=false;
 
@@ -455,7 +468,20 @@ function openMovie(o){
 
     v.addEventListener("error",()=>{
       if(vid!==v)return;
-      $("#status").textContent="Não foi possível carregar este filme agora. Tente novamente mais tarde.";
+      const code=v.error&&v.error.code;
+      const detalhe=code===2?"A conexão foi interrompida.":code===3?"O navegador não conseguiu decodificar este arquivo.":code===4?"A fonte ou o formato deste vídeo não é compatível.":"O servidor não conseguiu entregar o vídeo.";
+      $("#status").textContent=detalhe+" Verifique a internet e toque em Reproduzir para tentar novamente.";
+      console.warn("Erro no vídeo:",o.t,code,v.currentSrc);
+    });
+
+    v.addEventListener("waiting",()=>{
+      if(vid===v)$("#status").textContent="Carregando vídeo…";
+    });
+    v.addEventListener("playing",()=>{
+      if(vid===v)$("#status").textContent="";
+    });
+    v.addEventListener("canplay",()=>{
+      if(vid===v&&v.paused)$("#status").textContent="Pronto para reproduzir.";
     });
 
     v.addEventListener("stalled",()=>{
@@ -491,7 +517,8 @@ function closeMovie(){
   if(vid){
     vid.pause();
     vid.removeAttribute("src");
-    vid.load();
+    vid.querySelectorAll("source,track").forEach(el=>el.remove());
+    try{vid.load()}catch(e){}
     vid.remove();
   }
 
