@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <!-- Se ativar a PLANILHA, inclua em connect-src: https://docs.google.com https://*.googleusercontent.com
-     Se trocar o endereço do servidor de vídeo, inclua o novo em media-src. -->
+     Os vídeos podem vir de qualquer endereço https (media-src https:). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https:; connect-src 'self' https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>CineNoite — Filmes online</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -68,7 +68,7 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;padding:16px;background:#101113cc;backdrop-filter:blur(4px)}
 .modal.open{display:flex}
 .dlg{position:relative;width:min(900px,100%);max-height:100%;overflow:auto;background:var(--surface);border-radius:20px;box-shadow:0 30px 80px #0008}
-.x{position:absolute;top:12px;right:12px;z-index:3;width:38px;height:38px;border:0;border-radius:50%;background:#18191c99;font-size:1.2rem}
+.x{position:absolute;top:12px;right:12px;z-index:5;width:38px;height:38px;border:0;border-radius:50%;background:#18191c99;font-size:1.2rem}
 .screen{position:relative;aspect-ratio:16/9;display:grid;place-items:center;overflow:hidden}
 .screen video{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;object-fit:contain}
 
@@ -90,6 +90,11 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .screen.playing .big{opacity:0}
 .screen.playing:hover .big{opacity:1}
 
+/* Aviso/erro aparece em cima do vídeo, para você conseguir ver. */
+.status{position:absolute;left:12px;right:60px;top:12px;z-index:4;margin:0;padding:8px 12px;border-radius:10px;background:#000000cc;color:#fff;font-size:.85rem;pointer-events:none}
+.status:empty{display:none}
+.status a{color:var(--accent);text-decoration:underline;pointer-events:auto}
+
 .ctl{position:absolute;left:0;right:0;bottom:0;z-index:3;display:flex;align-items:center;gap:10px;padding:26px 16px 12px;background:linear-gradient(transparent,#000a);opacity:1;transition:opacity .25s ease}
 .screen.controls-hidden .ctl{opacity:0;pointer-events:none}
 .screen.controls-hidden .big{opacity:0!important;pointer-events:none}
@@ -104,7 +109,6 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .info p{margin:0;max-width:64ch;color:#d9dadc}
 .info .btn{background:var(--surface-2);justify-self:start}
 .note{font-size:.8rem;color:var(--muted)}
-.status{font-size:.85rem;color:var(--muted);min-height:1.3em}
 
 @media(max-width:560px){
 .hero-card{min-height:320px}
@@ -139,6 +143,7 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 <button class="x" id="close" aria-label="Fechar">×</button>
 <div class="screen" id="screen">
 <button class="big" id="big" aria-label="Reproduzir"></button>
+<p class="status" id="status" role="status"></p>
 <div class="ctl" id="ctl">
 <button id="pp" aria-label="Reproduzir ou pausar"></button>
 <div class="track" id="track"><div class="fill" id="fill"></div></div>
@@ -154,7 +159,6 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 <p id="ms"></p>
 <button class="btn" id="mf" aria-pressed="false"></button>
 <p class="note">Atalhos: Espaço ou K pausa, ← → pulam 10 s, M muda o som, F tela cheia.</p>
-<p class="status" id="status" role="status"></p>
 </div>
 </div>
 </div>
@@ -173,7 +177,8 @@ const MEDIA_OK=MEDIA!=="";
 const TS_HOST="desktop-g2jklud.taile9cab4.ts.net";
 const TOKEN="k7Qp2xVn9RwT4mZb8LcY3hDf";
 
-// Link da planilha do Google publicada como CSV. Vazio "" = usa a lista abaixo.
+// Link da planilha do Google publicada. Vazio "" = usa só a lista de filmes abaixo.
+// (Pode ser o link "pubhtml": o site converte para CSV sozinho.)
 // Colunas aceitas: titulo, genero, ano, minutos, idade, nota, cor, sinopse, capa, legenda, drive, video
 // ("video" = link https completo ou só o nome do arquivo no seu PC, ex.: gertrud.mp4)
 const PLANILHA="https://docs.google.com/spreadsheets/d/e/2PACX-1vQbd8ZRc5JG_FMBqxu9ZQBIPOKFEKvlKjfuPoWqDjtPH0JDiHHBDqRVp9qz_WGNgpqliHb1gkuHTDa2/pubhtml?gid=779073697&single=true";
@@ -334,6 +339,21 @@ function ui(){
   $("#screen").classList.toggle("playing",playing);
 }
 
+// Mostra, em cima do vídeo, por que ele não carregou (código + servidor).
+function mostrarErro(v){
+  const code=v.error&&v.error.code;
+  const detalhe=code===2?"A conexão foi interrompida.":
+    code===3?"O navegador não conseguiu decodificar este arquivo (formato ou codec).":
+    code===4?"Não achei o vídeo neste endereço, ele está bloqueado ou o formato não é compatível.":
+    "O servidor não conseguiu entregar o vídeo.";
+  const link=v.currentSrc||v.src||"";
+  let host="";
+  try{host=new URL(link).hostname}catch(e){}
+  $("#status").innerHTML=esc(detalhe)+" (código "+esc(code||"?")+(host?", servidor "+esc(host):"")+")"+
+    (/^https?:/i.test(link)?' <a href="'+esc(link)+'" target="_blank" rel="noopener">Abrir o vídeo direto</a>':"");
+  console.warn("Erro no vídeo:",cur&&cur.t,"código",code,link);
+}
+
 function setPlay(on){
   if(!vid)return;
 
@@ -342,7 +362,8 @@ function setPlay(on){
     const p=player.play();
     if(p&&p.catch)p.catch(error=>{
       if(vid!==player)return;
-      $("#status").textContent="Não foi possível iniciar a reprodução. Toque em Reproduzir para tentar novamente.";
+      if(player.error)mostrarErro(player);
+      else $("#status").textContent="Não foi possível iniciar a reprodução. Toque em Reproduzir para tentar novamente.";
       console.warn("Falha ao iniciar reprodução:",error);
     });
   }else{
@@ -382,7 +403,6 @@ function openMovie(o){
   const s=$("#screen");
   s.setAttribute("style",sty(o));
   // Desconecta completamente o player anterior antes de criar outro.
-  // Isso evita que downloads/eventos antigos concorram com o próximo filme.
   s.querySelectorAll("video").forEach(v=>{
     v.pause();
     v.removeAttribute("src");
@@ -405,7 +425,7 @@ function openMovie(o){
     v.playsInline=true;
     v.setAttribute("playsinline","");
     v.setAttribute("webkit-playsinline","");
-    v.preload="auto";
+    v.preload="metadata";
     v.controls=false;
 
     (o.subtitles||[]).forEach((sub,i)=>{
@@ -440,12 +460,14 @@ function openMovie(o){
     }
 
     v.addEventListener("play",()=>{
+      if(vid!==v)return;
       playing=true;
       ui();
       showControls();
     });
 
     v.addEventListener("pause",()=>{
+      if(vid!==v)return;
       playing=false;
       ui();
       keepControlsVisible();
@@ -462,16 +484,14 @@ function openMovie(o){
     v.addEventListener("durationchange",ui);
 
     v.addEventListener("loadedmetadata",()=>{
+      if(vid!==v)return;
       $("#status").textContent="";
       ui();
     });
 
     v.addEventListener("error",()=>{
       if(vid!==v)return;
-      const code=v.error&&v.error.code;
-      const detalhe=code===2?"A conexão foi interrompida.":code===3?"O navegador não conseguiu decodificar este arquivo.":code===4?"A fonte ou o formato deste vídeo não é compatível.":"O servidor não conseguiu entregar o vídeo.";
-      $("#status").textContent=detalhe+" Verifique a internet e toque em Reproduzir para tentar novamente.";
-      console.warn("Erro no vídeo:",o.t,code,v.currentSrc);
+      mostrarErro(v);
     });
 
     v.addEventListener("waiting",()=>{
@@ -496,7 +516,9 @@ function openMovie(o){
     s.prepend(v);
     vid=v;
   }else{
-    $("#status").textContent="Este filme ainda não está disponível.";
+    $("#status").textContent=o.driveId&&!MEDIA_OK
+      ?"Este filme depende do servidor do Drive, que não está configurado."
+      :"Este filme ainda não está disponível.";
   }
 
   $("#mt").textContent=o.t;
@@ -514,19 +536,21 @@ function closeMovie(){
 
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
 
-  if(vid){
-    vid.pause();
-    vid.removeAttribute("src");
-    vid.querySelectorAll("source,track").forEach(el=>el.remove());
-    try{vid.load()}catch(e){}
-    vid.remove();
-  }
-
+  const old=vid;
   vid=null;
   playing=false;
   isSeeking=false;
   pendingSeekTime=null;
   seekPointerId=null;
+
+  if(old){
+    old.pause();
+    old.removeAttribute("src");
+    old.querySelectorAll("source,track").forEach(el=>el.remove());
+    try{old.load()}catch(e){}
+    old.remove();
+  }
+
   $("#modal").classList.remove("open");
 
   if(lastFocus)lastFocus.focus();
@@ -761,13 +785,23 @@ function filmesDaPlanilha(csv){
 async function carregarPlanilha(){
   if(!PLANILHA)return;
   try{
+    // Aceita o link "pubhtml" e converte para CSV automaticamente.
     let url=PLANILHA.replace("/pubhtml","/pub");
     if(!/output=csv/.test(url))url+=(url.includes("?")?"&":"?")+"output=csv";
+
     const r=await fetch(url,{cache:"no-store"});
-    if(!lista.length)return;
+    if(!r.ok)throw new Error("HTTP "+r.status);
+
+    const lista=filmesDaPlanilha(await r.text());
+    if(!lista.length){
+      console.warn("A planilha foi lida, mas não tem filmes válidos (confira a linha de títulos das colunas). Usando a lista padrão.");
+      return;
+    }
+
     lista.forEach((o,i)=>{o.id=i;o.src=o.src||""});
     M.splice(0,M.length,...lista);
     renderAll();
+    console.info("Planilha carregada:",lista.length,"filmes.");
   }catch(e){
     console.warn("Não foi possível ler a planilha; usando a lista padrão.",e);
   }
