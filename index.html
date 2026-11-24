@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex, nofollow">
 <!-- Se ativar a PLANILHA, inclua em connect-src: https://docs.google.com https://*.googleusercontent.com
      Se trocar o endereço do servidor de vídeo, inclua o novo em media-src. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https://desktop-g2jklud.taile9cab4.ts.net https://archive.org https://*.archive.org https://cmc-3ke1.onrender.com; connect-src 'self' https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https:; connect-src 'self' https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>CineNoite — Filmes online</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -761,9 +761,9 @@ function filmesDaPlanilha(csv){
 async function carregarPlanilha(){
   if(!PLANILHA)return;
   try{
-    const r=await fetch(PLANILHA,{cache:"no-store"});
-    if(!r.ok)throw new Error("HTTP "+r.status);
-    const lista=filmesDaPlanilha(await r.text());
+    let url=PLANILHA.replace("/pubhtml","/pub");
+    if(!/output=csv/.test(url))url+=(url.includes("?")?"&":"?")+"output=csv";
+    const r=await fetch(url,{cache:"no-store"});
     if(!lista.length)return;
     lista.forEach((o,i)=>{o.id=i;o.src=o.src||""});
     M.splice(0,M.length,...lista);
