@@ -104,7 +104,8 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .info p{margin:0;max-width:64ch;color:#d9dadc}
 .info .btn{background:var(--surface-2);justify-self:start}
 .note{font-size:.8rem;color:var(--muted)}
-.status{font-size:.85rem;color:var(--muted);min-height:1.3em;overflow-wrap:anywhere}\n.status button{margin-left:8px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);padding:5px 12px;color:var(--text)}
+.status{font-size:.85rem;color:var(--muted);min-height:1.3em;overflow-wrap:anywhere}
+.status button{margin-left:8px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);padding:5px 12px;color:var(--text)}
 
 @media(max-width:560px){
 .hero-card{min-height:320px}
@@ -246,7 +247,8 @@ try{favs=new Set(JSON.parse(localStorage.getItem("cn-favs")||"[]"))}catch(e){}
 const saveFavs=()=>{try{localStorage.setItem("cn-favs",JSON.stringify([...favs]))}catch(e){}};
 
 let filter="Todos",q="",cur=null,playing=false,pos=0,lastFocus=null,vid=null;
-let controlsTimer=null;\nlet mediaWaitTimer=null;
+let controlsTimer=null;
+let mediaWaitTimer=null;
 const CONTROLS_DELAY=3000;
 let isSeeking=false;
 let seekPointerId=null;
