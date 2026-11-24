@@ -191,6 +191,15 @@ app.get("/media/:id", async (req, res) => {
 
   let source;
   let output;
+  let clientDisconnected = false;
+
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      clientDisconnected = true;
+      if (output && !output.destroyed) output.destroy();
+      if (source && !source.destroyed) source.destroy();
+    }
+  });
 
   try {
     const client = await auth.getClient();
@@ -214,6 +223,10 @@ app.get("/media/:id", async (req, res) => {
     });
 
     source = response.data;
+    if (clientDisconnected) {
+      if (source && !source.destroyed) source.destroy();
+      return;
+    }
 
     const upstreamStatus = response.status;
 
@@ -232,7 +245,9 @@ app.get("/media/:id", async (req, res) => {
 
     res.setHeader("Content-Type", contentType);
     res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Cache-Control", "private, no-store");
+    // Permite que o navegador móvel reutilize blocos já baixados,
+    // sem tornar os vídeos públicos em caches compartilhados.
+    res.setHeader("Cache-Control", "private, max-age=1800, must-revalidate");
 
     // O Google Drive informou que o intervalo não é válido.
     if (upstreamStatus === 416) {
@@ -314,18 +329,7 @@ app.get("/media/:id", async (req, res) => {
       }
     });
 
-    // Se o navegador cancelar ou trocar de posição, interrompe o fluxo antigo.
-    res.on("close", () => {
-      if (!res.writableEnded) {
-        if (output && output !== source) {
-          output.destroy();
-        }
-
-        if (source && !source.destroyed) {
-          source.destroy();
-        }
-      }
-    });
+    // O listener de close acima também cobre a espera pela resposta do Drive.
 
     output.pipe(res);
 
