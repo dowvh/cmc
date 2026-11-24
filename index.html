@@ -95,7 +95,7 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .screen.controls-hidden .big{opacity:0!important;pointer-events:none}
 .screen.controls-hidden{cursor:none}
 .ctl button{border:0;background:none;padding:2px;display:grid}
-.track{flex:1;height:8px;border-radius:4px;background:#ffffff47;cursor:pointer;position:relative;min-width:20px;touch-action:none}
+.track{flex:1;height:8px;border-radius:4px;background:#ffffff47;cursor:pointer;position:relative;min-width:20px;touch-action:none;user-select:none}
 .fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:4px;background:var(--accent);pointer-events:none}
 .time{font-size:.82rem;font-variant-numeric:tabular-nums;white-space:nowrap}
 #subtitle{max-width:130px;background:#242629;color:white;border:1px solid var(--line);border-radius:8px;padding:5px;font-size:.78rem}
@@ -105,6 +105,7 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 .info .btn{background:var(--surface-2);justify-self:start}
 .note{font-size:.8rem;color:var(--muted)}
 .status{font-size:.85rem;color:var(--muted);min-height:1.3em}
+#retry{justify-self:start;background:var(--accent);color:var(--accent-ink);font-weight:700}
 
 @media(max-width:560px){
 .hero-card{min-height:320px}
@@ -154,7 +155,8 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 <p id="ms"></p>
 <button class="btn" id="mf" aria-pressed="false"></button>
 <p class="note">Atalhos: Espaço ou K pausa, ← → pulam 10 s, M muda o som, F tela cheia.</p>
-<p class="status" id="status" role="status"></p>
+<p class="status" id="status" role="status" aria-live="polite"></p>
+<button class="btn" id="retry" type="button" hidden>Tentar carregar novamente</button>
 </div>
 </div>
 </div>
@@ -171,12 +173,12 @@ const MEDIA_OK=MEDIA!=="";
 // Servidor de vídeos do seu PC (Caddy + Tailscale Funnel).
 // TOKEN precisa ser IGUAL ao "t=..." do Caddyfile. Deixe "" para não enviar token.
 const TS_HOST="desktop-g2jklud.taile9cab4.ts.net";
-const TOKEN="k7Qp2xVn9RwT4mZb8LcY3hDf";
+const TOKEN="CN-8fK2mQ9xT7vP4zR6wB3nL5";
 
 // Link da planilha do Google publicada como CSV. Vazio "" = usa a lista abaixo.
 // Colunas aceitas: titulo, genero, ano, minutos, idade, nota, cor, sinopse, capa, legenda, drive, video
 // ("video" = link https completo ou só o nome do arquivo no seu PC, ex.: gertrud.mp4)
-const PLANILHA="https://docs.google.com/spreadsheets/d/e/2PACX-1vQbd8ZRc5JG_FMBqxu9ZQBIPOKFEKvlKjfuPoWqDjtPH0JDiHHBDqRVp9qz_WGNgpqliHb1gkuHTDa2/pubhtml?gid=779073697&single=true";
+const PLANILHA="https://docs.google.com/spreadsheets/d/e/2PACX-1vQbd8ZRc5JG_FMBqxu9ZQBIPOKFEKvlKjfuPoWqDjtPH0JDiHHBDqRVp9qz_WGNgpqliHb1gkuHTDa2/pub?gid=779073697&single=true&output=csv";
 
 const M=[
 {t:"Au Hasard Balthazar",g:"Drama",y:1966,m:95,a:"14",s:4.3,h:18,x:"50%",p:"Na França rural, a vida de um burro de carga reflete as alegrias, crueldades e sofrimentos dos vários donos pelos quais passa.",img:CAPAS+"au-hasard-balthazar.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/au-hasard-balthazar.mp4",subtitles:[{src:"legendas/au-hasard-balthazar-pt.vtt",lang:"pt-BR",label:"Português"}]},
@@ -247,6 +249,7 @@ const saveFavs=()=>{try{localStorage.setItem("cn-favs",JSON.stringify([...favs])
 
 let filter="Todos",q="",cur=null,playing=false,pos=0,lastFocus=null,vid=null;
 let controlsTimer=null;
+let bufferTimer=null;
 const CONTROLS_DELAY=3000;
 let isSeeking=false;
 let seekPointerId=null;
@@ -342,7 +345,8 @@ function setPlay(on){
     const p=player.play();
     if(p&&p.catch)p.catch(error=>{
       if(vid!==player)return;
-      $("#status").textContent="Não foi possível iniciar a reprodução. Toque em Reproduzir para tentar novamente.";
+      $("#status").textContent="O navegador não conseguiu iniciar o vídeo. Confira a conexão e tente novamente.";
+      $("#retry").hidden=false;
       console.warn("Falha ao iniciar reprodução:",error);
     });
   }else{
@@ -392,7 +396,9 @@ function openMovie(o){
   });
   vid=null;
 
+  clearTimeout(bufferTimer);
   $("#status").textContent="";
+  $("#retry").hidden=true;
   $("#subtitle").hidden=true;
   $("#subtitle").innerHTML='<option value="-1">Legendas: desligadas</option>';
 
@@ -405,7 +411,7 @@ function openMovie(o){
     v.playsInline=true;
     v.setAttribute("playsinline","");
     v.setAttribute("webkit-playsinline","");
-    v.preload="auto";
+    v.preload="metadata";
     v.controls=false;
 
     (o.subtitles||[]).forEach((sub,i)=>{
@@ -470,18 +476,28 @@ function openMovie(o){
       if(vid!==v)return;
       const code=v.error&&v.error.code;
       const detalhe=code===2?"A conexão foi interrompida.":code===3?"O navegador não conseguiu decodificar este arquivo.":code===4?"A fonte ou o formato deste vídeo não é compatível.":"O servidor não conseguiu entregar o vídeo.";
-      $("#status").textContent=detalhe+" Verifique a internet e toque em Reproduzir para tentar novamente.";
+      $("#status").textContent=detalhe+" Confira se o servidor está acessível e tente novamente.";
+      $("#retry").hidden=false;
+      clearTimeout(bufferTimer);
       console.warn("Erro no vídeo:",o.t,code,v.currentSrc);
     });
 
     v.addEventListener("waiting",()=>{
-      if(vid===v)$("#status").textContent="Carregando vídeo…";
+      if(vid!==v)return;
+      $("#status").textContent="Carregando vídeo…";
+      clearTimeout(bufferTimer);
+      bufferTimer=setTimeout(()=>{
+        if(vid===v&&!v.paused){
+          $("#status").textContent="A reprodução está demorando. Isso pode indicar lentidão na conexão ou no servidor de vídeo.";
+          $("#retry").hidden=false;
+        }
+      },12000);
     });
     v.addEventListener("playing",()=>{
-      if(vid===v)$("#status").textContent="";
+      if(vid===v){clearTimeout(bufferTimer);$("#status").textContent="";$("#retry").hidden=true;}
     });
     v.addEventListener("canplay",()=>{
-      if(vid===v&&v.paused)$("#status").textContent="Pronto para reproduzir.";
+      if(vid===v){clearTimeout(bufferTimer);if(v.paused)$("#status").textContent="Pronto para reproduzir.";}
     });
 
     v.addEventListener("stalled",()=>{
@@ -511,6 +527,7 @@ function openMovie(o){
 
 function closeMovie(){
   keepControlsVisible();
+  clearTimeout(bufferTimer);
 
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
 
@@ -673,6 +690,13 @@ $("#fs").onclick=()=>{
 };
 
 $("#close").onclick=closeMovie;
+
+$("#retry").onclick=()=>{
+  if(!cur)return;
+  const filme=cur;
+  openMovie(filme);
+  setPlay(true);
+};
 
 $("#modal").addEventListener("click",e=>{
   if(e.target.id==="modal")closeMovie();
