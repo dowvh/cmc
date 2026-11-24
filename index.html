@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<!-- Se ativar a PLANILHA, inclua em connect-src: https://docs.google.com https://*.googleusercontent.com
+     Se trocar o endereço do servidor de vídeo, inclua o novo em media-src. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' https://desktop-g2jklud.taile9cab4.ts.net https://archive.org https://*.archive.org https://cmc-3ke1.onrender.com; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>CineNoite — Filmes online</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -149,7 +153,7 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 <div class="meta" id="mm"></div>
 <p id="ms"></p>
 <button class="btn" id="mf" aria-pressed="false"></button>
-<p class="note">Player próprio do CineNoite. Os vídeos do Drive são carregados pelo endpoint /media/ID do servidor; este HTML sozinho não transmite arquivos privados do Drive.</p>
+<p class="note">Atalhos: Espaço ou K pausa, ← → pulam 10 s, M muda o som, F tela cheia.</p>
 <p class="status" id="status" role="status"></p>
 </div>
 </div>
@@ -158,15 +162,20 @@ footer{max-width:1200px;margin:56px auto 0;padding:24px 20px 32px;border-top:1px
 <script>
 const CAPAS="capas/";
 
-// Endereço do SERVIDOR (o que roda o server.js), não do GitHub Pages.
-// Exemplo: "https://cinenoite.onrender.com" (https uma vez só, sem barra no final).
-// Rodando tudo no seu PC com o server.js: deixe vazio "".
+// Endereço do SERVIDOR do Render (só para os filmes que ainda usam driveId).
+// Quando migrar o último filme, deixe "" e suspenda o serviço no Render.
 const MEDIA_BASE="https://cmc-3ke1.onrender.com";
 const MEDIA=MEDIA_BASE.replace(/\/+$/,"");
-const MEDIA_OK=MEDIA==="" || !/SEU-SERVIDOR/.test(MEDIA);
+const MEDIA_OK=MEDIA!=="";
 
-// Link da planilha do Google publicada como CSV (veja o passo a passo).
-// Vazio "" = usa só a lista de filmes que está logo abaixo.
+// Servidor de vídeos do seu PC (Caddy + Tailscale Funnel).
+// TOKEN precisa ser IGUAL ao "t=..." do Caddyfile. Deixe "" para não enviar token.
+const TS_HOST="desktop-g2jklud.taile9cab4.ts.net";
+const TOKEN="k7Qp2xVn9RwT4mZb8LcY3hDf";
+
+// Link da planilha do Google publicada como CSV. Vazio "" = usa a lista abaixo.
+// Colunas aceitas: titulo, genero, ano, minutos, idade, nota, cor, sinopse, capa, legenda, drive, video
+// ("video" = link https completo ou só o nome do arquivo no seu PC, ex.: gertrud.mp4)
 const PLANILHA="";
 
 const M=[
@@ -192,10 +201,10 @@ const M=[
 {t:"Q & A",g:"Policial",y:1990,m:132,a:"16",s:4.1,h:20,x:"70%",p:"Em Nova York, um jovem promotor assistente é designado para investigar o assassinato de um criminoso cometido por um veterano e condecorado detetive da polícia, descobrindo uma rede de corrupção, racismo e acobertamentos dentro do sistema judicial.",img:CAPAS+"q-and-a.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/q-and-a.mp4",subtitles:[{src:"legendas/q-and-a-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Les savates du bon Dieu",g:"Drama",y:2000,m:104,a:"14",s:4.0,h:20,x:"70%",p:"Em um vilarejo isolado nas montanhas da França, dois andarilhos marginais — um velho cigano e um jovem em busca de rumo — travam conversas filosóficas e atravessam encontros singulares enquanto seguem estrada a pé.",img:CAPAS+"les-savates-du-bon-dieu.jpg",driveId:"1Hg9QV_wzIfoHmqA_NKCQXneQNDEsY0Yf",subtitles:[{src:"legendas/les-savates-du-bon-dieu-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"The Second Civil War",g:"Drama",y:1997,m:99,a:"14",s:3.9,h:20,x:"70%",p:"Em uma crise política e social nos Estados Unidos, o governador de Idaho decide fechar as fronteiras estaduais a imigrantes e refugiados, desencadeando um impasse com o governo federal e a mídia que escalona para um novo conflito interno.",img:CAPAS+"the-second-civil-war.jpg",driveId:"1JqwGKGQRl000zZ9Itd_x7UgLzpH8LAy",subtitles:[{src:"legendas/the-second-civil-war-pt.vtt",lang:"pt-BR",label:"Português"}]},
-{t:"Kiss Me Deadly",g:"Suspense",y:1955,m:106,a:"14",s:4.2,h:210,x:"50%",p:"Um detetive particular encontra uma mulher assustada na estrada e é arrastado para uma trama perigosa em torno de uma maleta misteriosa.",img:CAPAS+"kiss-me-deadly.jpg",src:"https://archive.org/download/kiss-me-deadly-1955/Kiss%20Me%20Deadly%20%281955%29.m4v",subtitles:[{src:"legendas/fantastic-planet-pt.vtt",lang:"pt-BR",label:"Português"}]},
+{t:"Kiss Me Deadly",g:"Suspense",y:1955,m:106,a:"14",s:4.2,h:210,x:"50%",p:"Um detetive particular encontra uma mulher assustada na estrada e é arrastado para uma trama perigosa em torno de uma maleta misteriosa.",img:CAPAS+"kiss-me-deadly.jpg",src:"https://archive.org/download/kiss-me-deadly-1955/Kiss%20Me%20Deadly%20%281955%29.m4v",subtitles:[{src:"legendas/kiss-me-deadly-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Homicide",g:"Policial",y:1991,m:102,a:"16",s:4.2,h:20,x:"70%",p:"Durante a investigação do assassinato de uma idosa judia em Baltimore, um detetive da homicídios se envolve em uma conspiração clandestina e confronta suas próprias raízes e identidade cultural.",img:CAPAS+"homicide.jpg",driveId:"1PZuYlNPAy8h9Ui0ro2VZENuZbnjzIlet",subtitles:[{src:"legendas/homicide-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Umberto D.",g:"Drama",y:1952,m:89,a:"10",s:4.5,h:35,x:"30%",p:"Um professor aposentado em Roma tenta manter a dignidade e a companhia do seu cachorro enquanto luta para pagar o aluguel.",img:CAPAS+"umberto-d.jpg"},
-{t:"Tabu",g:"Drama",y:1931,m:75,a:"12",s:4.4,h:150,x:"60%",p:"Um jovem em Paris se envolve com o furto de carteiras e passa a viver entre a obsessão e o medo de ser descoberto.",img:CAPAS+"tabu.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/tabu.mp4",subtitles:[{src:"legendas/tabu-pt.vtt",lang:"pt-BR",label:"Português"}]},  
+{t:"Tabu",g:"Drama",y:1931,m:75,a:"12",s:4.4,h:150,x:"60%",p:"Nos mares do Sul, um jovem pescador e uma moça escolhida como virgem sagrada se apaixonam e fogem para outra ilha, mas a antiga lei do tabu continua a persegui-los.",img:CAPAS+"tabu.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/tabu.mp4",subtitles:[{src:"legendas/tabu-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Pickpocket",g:"Suspense",y:1959,m:75,a:"12",s:4.4,h:150,x:"60%",p:"Um jovem em Paris se envolve com o furto de carteiras e passa a viver entre a obsessão e o medo de ser descoberto.",img:CAPAS+"pickpocket.jpg",driveId:"1aXm38oSTsh_vhTTY40nqTJbRqGN5I4yQ",subtitles:[{src:"legendas/pickpocket-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"East of Eden",g:"Drama",y:1955,m:118,a:"12",s:4.3,h:20,x:"70%",p:"Na Califórnia do início do século XX, um jovem busca a aprovação do pai e disputa o afeto da família.",img:CAPAS+"east-of-eden.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/east-of-eden.mp4",subtitles:[{src:"legendas/east-of-eden-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Cat People",g:"Terror",y:1942,m:73,a:"12",s:3.7,h:20,x:"70%",p:"Em Nova York, uma jovem artista acredita carregar uma maldição ancestral que a transforma em pantera ao sentir ciúmes ou intimidade.",img:CAPAS+"cat-people.jpg",driveId:"1cKNnPEzTRvHf5EdZQPpay6kWwfzpRZ3P",subtitles:[{src:"legendas/cat-people-pt.vtt",lang:"pt-BR",label:"Português"}]},
@@ -207,8 +216,19 @@ M.forEach((o,i)=>{o.id=i;o.src=o.src||""});
 
 const $=s=>document.querySelector(s);
 const norm=s=>s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-const dur=m=>Math.floor(m/60)+"h "+String(m%60).padStart(2,"0")+"min";
-const sty=o=>"--h:"+o.h+";--x:"+o.x+(o.img?";--img:url('"+o.img+"')":"");
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const dur=m=>m<60?m+"min":Math.floor(m/60)+"h "+String(m%60).padStart(2,"0")+"min";
+const idade=a=>a==="L"?"Livre":a+" anos";
+const sty=o=>"--h:"+(+o.h||0)+";--x:"+String(o.x).replace(/[^0-9.%]/g,"")+(o.img?";--img:url('"+encodeURI(o.img).replace(/['()]/g,c=>"%"+c.charCodeAt(0).toString(16))+"')":"");
+
+// Acrescenta o token aos links do seu servidor (Caddy).
+function mediaUrl(u){
+  try{
+    const x=new URL(u,location.href);
+    if(TOKEN&&x.hostname===TS_HOST)x.searchParams.set("t",TOKEN);
+    return x.href;
+  }catch(e){return u}
+}
 
 const ICON={
 play:'<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
@@ -219,7 +239,7 @@ mute:'<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path 
 fs:'<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M5 5h5v2H7v3H5V5zm9 0h5v5h-2V7h-3V5zM5 14h2v3h3v2H5v-5zm12 0h2v5h-5v-2h3v-3z"/></svg>'
 };
 
-const meta=o=>''+(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+o.y+'</span><span>'+dur(o.m)+'</span><span>'+o.g+'</span><span>'+o.a+' anos</span>';
+const meta=o=>(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+esc(o.y)+'</span><span>'+dur(o.m)+'</span><span>'+esc(o.g)+'</span><span>'+esc(idade(o.a))+'</span>';
 
 let favs=new Set();
 try{favs=new Set(JSON.parse(localStorage.getItem("cn-favs")||"[]"))}catch(e){}
@@ -248,8 +268,6 @@ function keepControlsVisible(){
   $("#screen").classList.remove("controls-hidden");
 }
 
-const cats=["Todos","Ação","Drama","Ficção","Terror","Suspense","Comédia","Romance","Minha lista"];
-
 function toggleFav(id){
   favs.has(id)?favs.delete(id):favs.add(id);
   saveFavs();
@@ -257,18 +275,21 @@ function toggleFav(id){
   if(cur&&cur.id===id)fillFav();
 }
 
+// As categorias vêm dos gêneros que existem no catálogo.
 function renderChips(){
-  $("#chips").innerHTML=cats.map(c=>'<button class="chip'+(c===filter?' on':'')+'" data-c="'+c+'">'+c+'</button>').join("");
+  const cats=["Todos",...[...new Set(M.map(o=>o.g))].sort((a,b)=>a.localeCompare(b,"pt")),"Minha lista"];
+  if(!cats.includes(filter))filter="Todos";
+  $("#chips").innerHTML=cats.map(c=>'<button class="chip'+(c===filter?' on':'')+'" data-c="'+esc(c)+'">'+esc(c)+'</button>').join("");
 }
 
 function renderHero(){
   const o=M[0],f=favs.has(o.id);
-  $("#hero").innerHTML='<div class="hero-card'+(o.img?' has-img':'')+'" style="'+sty(o)+'"><div class="meta">'+meta(o)+'</div><h1>'+o.t+'</h1><p>'+o.p+'</p><div class="actions"><button class="btn main" data-open="'+o.id+'">'+ICON.play.replace(/26/g,"20")+'Assistir</button><button class="btn" data-fav="'+o.id+'" aria-pressed="'+f+'">'+ICON.heart+(f?'Na minha lista':'Adicionar à minha lista')+'</button></div></div>';
+  $("#hero").innerHTML='<div class="hero-card'+(o.img?' has-img':'')+'" style="'+esc(sty(o))+'"><div class="meta">'+meta(o)+'</div><h1>'+esc(o.t)+'</h1><p>'+esc(o.p)+'</p><div class="actions"><button class="btn main" data-open="'+o.id+'">'+ICON.play.replace(/26/g,"20")+'Assistir</button><button class="btn" data-fav="'+o.id+'" aria-pressed="'+f+'">'+ICON.heart+(f?'Na minha lista':'Adicionar à minha lista')+'</button></div></div>';
 }
 
 function renderGrid(){
   const L=M.filter(o=>(filter==="Todos"||(filter==="Minha lista"?favs.has(o.id):o.g===filter))&&norm(o.t).includes(norm(q)));
-  $("#grid").innerHTML=L.map(o=>'<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+o.t+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+sty(o)+'">'+(o.img?'':o.t)+'</div><h3>'+o.t+'</h3><div class="meta">'+(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+o.y+'</span><span>'+o.g+'</span></div></button><button class="fav" data-fav="'+o.id+'" aria-pressed="'+favs.has(o.id)+'" aria-label="Minha lista: '+o.t+'">'+ICON.heart+'</button></article>').join("");
+  $("#grid").innerHTML=L.map(o=>'<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+esc(o.t)+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+esc(sty(o))+'">'+(o.img?'':esc(o.t))+'</div><h3>'+esc(o.t)+'</h3><div class="meta">'+(o.s?'<span class="star">★ '+o.s.toFixed(1)+'</span>':'')+'<span>'+esc(o.y)+'</span><span>'+esc(o.g)+'</span></div></button><button class="fav" data-fav="'+o.id+'" aria-pressed="'+favs.has(o.id)+'" aria-label="Minha lista: '+esc(o.t)+'">'+ICON.heart+'</button></article>').join("");
   const e=$("#empty");
   e.hidden=L.length>0;
   e.textContent=filter==="Minha lista"&&!q?"Sua lista está vazia. Toque no coração de um filme para salvá-lo aqui.":"Nenhum filme encontrado. Tente outro nome ou escolha outra categoria.";
@@ -319,7 +340,7 @@ function setPlay(on){
   if(on){
     const p=vid.play();
     if(p&&p.catch)p.catch(()=>{
-      $("#status").textContent="O navegador não conseguiu iniciar o vídeo. Verifique o servidor e o formato do arquivo.";
+      $("#status").textContent="O navegador não conseguiu iniciar o vídeo. Tente novamente em instantes.";
     });
   }else{
     vid.pause();
@@ -330,6 +351,19 @@ function fillFav(){
   const f=favs.has(cur.id);
   $("#mf").setAttribute("aria-pressed",f);
   $("#mf").innerHTML=ICON.heart+(f?"Na minha lista":"Adicionar à minha lista");
+}
+
+function toggleFs(){
+  const el=$("#screen");
+
+  if(document.fullscreenElement){
+    document.exitFullscreen();
+  }else if(el.requestFullscreen){
+    el.requestFullscreen();
+  }else if(vid&&vid.webkitEnterFullscreen){
+    // iPhone: só o player nativo entra em tela cheia.
+    vid.webkitEnterFullscreen();
+  }
 }
 
 function openMovie(o){
@@ -351,9 +385,8 @@ function openMovie(o){
   $("#subtitle").hidden=true;
   $("#subtitle").innerHTML='<option value="-1">Legendas: desligadas</option>';
 
-  // Arquivo direto (src) ou vídeo do Drive servido pelo server.js.
-  const needsServer=!o.src&&o.driveId&&!MEDIA_OK;
-  const url=o.src||(o.driveId&&MEDIA_OK?MEDIA+"/media/"+encodeURIComponent(o.driveId):"");
+  // Arquivo direto (src, com token se for do seu PC) ou vídeo do Drive via Render.
+  const url=o.src?mediaUrl(o.src):(o.driveId&&MEDIA_OK?MEDIA+"/media/"+encodeURIComponent(o.driveId):"");
 
   if(url){
     const v=document.createElement("video");
@@ -407,7 +440,6 @@ function openMovie(o){
 
     v.addEventListener("timeupdate",ui);
     v.addEventListener("seeking",()=>{
-      // O navegador iniciou a busca pelo novo ponto.
       if(pendingSeekTime!==null)ui();
     });
     v.addEventListener("seeked",()=>{
@@ -422,12 +454,13 @@ function openMovie(o){
     });
 
     v.addEventListener("error",()=>{
-      $("#status").textContent="Não foi possível carregar o vídeo. Confira o servidor /media/ID e as permissões do Drive.";
+      if(vid!==v)return;
+      $("#status").textContent="Não foi possível carregar este filme agora. Tente novamente mais tarde.";
     });
 
     v.addEventListener("stalled",()=>{
-      if(pendingSeekTime!==null){
-        $("#status").textContent="Aguardando o servidor entregar o trecho solicitado do vídeo...";
+      if(vid===v&&pendingSeekTime!==null){
+        $("#status").textContent="Aguardando o servidor entregar o trecho solicitado...";
       }
     });
 
@@ -437,9 +470,7 @@ function openMovie(o){
     s.prepend(v);
     vid=v;
   }else{
-    $("#status").textContent=needsServer
-      ?"Configure MEDIA_BASE no HTML com o endereço do servidor (server.js) para tocar este filme."
-      :"Este filme ainda não tem um endereço de vídeo configurado.";
+    $("#status").textContent="Este filme ainda não está disponível.";
   }
 
   $("#mt").textContent=o.t;
@@ -454,6 +485,8 @@ function openMovie(o){
 
 function closeMovie(){
   keepControlsVisible();
+
+  if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
 
   if(vid){
     vid.pause();
@@ -498,7 +531,6 @@ function commitSeek(fraction){
   const duration=vid.duration;
   const targetTime=Math.max(0,Math.min(duration,fraction*duration));
 
-  // Guarda a posição escolhida até o evento seeked confirmar a operação.
   pendingSeekTime=targetTime;
   pos=targetTime/duration;
   $("#fill").style.width=(pos*100)+"%";
@@ -506,17 +538,15 @@ function commitSeek(fraction){
   $("#status").textContent="";
 
   try{
-    // A atribuição a currentTime é o que dispara o seek real no elemento.
     vid.currentTime=targetTime;
 
-    // Se já estávamos exatamente nesse ponto, não precisamos esperar seeked.
     if(Math.abs(vid.currentTime-targetTime)<0.05&&!vid.seeking){
       pendingSeekTime=null;
       ui();
     }
   }catch(error){
     pendingSeekTime=null;
-    $("#status").textContent="Não foi possível avançar para esse ponto. Verifique se o servidor aceita requisições Range.";
+    $("#status").textContent="Não foi possível avançar para esse ponto.";
     console.error("Erro ao posicionar o vídeo:",error);
     ui();
   }
@@ -612,14 +642,7 @@ $("#mute").onclick=()=>{
 
 $("#fs").onclick=()=>{
   showControls();
-
-  const el=$("#screen");
-
-  if(document.fullscreenElement){
-    document.exitFullscreen();
-  }else if(el.requestFullscreen){
-    el.requestFullscreen();
-  }
+  toggleFs();
 };
 
 $("#close").onclick=closeMovie;
@@ -628,8 +651,34 @@ $("#modal").addEventListener("click",e=>{
   if(e.target.id==="modal")closeMovie();
 });
 
+// Teclado: Esc fecha; Espaço/K pausa; setas pulam 10 s; M som; F tela cheia.
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"&&$("#modal").classList.contains("open"))closeMovie();
+  if(!$("#modal").classList.contains("open"))return;
+
+  if(e.key==="Escape"){closeMovie();return}
+  if(!vid||e.ctrlKey||e.metaKey||e.altKey)return;
+
+  const tag=e.target.tagName;
+  if(tag==="SELECT"||tag==="INPUT")return;
+
+  const k=e.key.toLowerCase();
+
+  if(k==="k"||(k===" "&&tag!=="BUTTON")){
+    e.preventDefault();
+    showControls();
+    setPlay(vid.paused);
+  }else if(k==="arrowleft"||k==="arrowright"){
+    if(!Number.isFinite(vid.duration))return;
+    e.preventDefault();
+    showControls();
+    vid.currentTime=Math.max(0,Math.min(vid.duration,vid.currentTime+(k==="arrowright"?10:-10)));
+  }else if(k==="m"){
+    showControls();
+    vid.muted=!vid.muted;
+  }else if(k==="f"){
+    showControls();
+    toggleFs();
+  }
 });
 
 /* ===== Lista de filmes pela planilha do Google ===== */
@@ -673,9 +722,10 @@ function filmesDaPlanilha(csv){
       x:(20+hueOf(t+"x")%60)+"%",
       p:col(r,"sinopse")
     };
-    const capa=col(r,"capa"),leg=col(r,"legenda"),dr=col(r,"drive");
-    if(capa)o.img=/^(https?|file):/.test(capa)?capa:CAPAS+capa;
+    const capa=col(r,"capa"),leg=col(r,"legenda"),dr=col(r,"drive"),vd=col(r,"video");
+    if(capa)o.img=/^https?:/.test(capa)?capa:CAPAS+capa;
     if(dr)o.driveId=driveId(dr);
+    if(vd)o.src=/^https:\/\//.test(vd)?vd:"https://"+TS_HOST+"/"+encodeURIComponent(vd);
     if(leg)o.subtitles=[{src:/^https?:/.test(leg)?leg:"legendas/"+leg,lang:"pt-BR",label:"Português"}];
     return o;
   }).filter(Boolean);
@@ -688,7 +738,7 @@ async function carregarPlanilha(){
     if(!r.ok)throw new Error("HTTP "+r.status);
     const lista=filmesDaPlanilha(await r.text());
     if(!lista.length)return;
-    lista.forEach((o,i)=>{o.id=i;o.src=""});
+    lista.forEach((o,i)=>{o.id=i;o.src=o.src||""});
     M.splice(0,M.length,...lista);
     renderAll();
   }catch(e){
