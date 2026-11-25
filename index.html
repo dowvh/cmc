@@ -148,12 +148,16 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 .cc select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 .info{display:none}
 
+.subs{position:absolute;left:50%;transform:translateX(-50%);bottom:7%;z-index:2;width:min(92%,1100px);text-align:center;pointer-events:none;font-weight:600;line-height:1.4;color:#fff;font-size:calc(var(--subsz,1)*clamp(16px,3vh,40px));transition:bottom .25s}
+.screen:not(.controls-hidden) .subs{bottom:190px}
+.subs .sl{background:#000c;padding:.05em .45em;border-radius:3px;white-space:pre-line;box-decoration-break:clone;-webkit-box-decoration-break:clone;text-shadow:0 1px 2px #000}
 @media(max-width:700px){
 .hero{min-height:78vh;padding-bottom:110px}
 .hero-art{width:100%;opacity:.55;-webkit-mask-image:linear-gradient(0deg,transparent,#000 60%);mask-image:linear-gradient(0deg,transparent,#000 60%)}
 .dots{bottom:56px}
 .topbar{height:76px;padding-left:12px;padding-right:12px}
 .status{top:80px}
+.screen:not(.controls-hidden) .subs{bottom:210px}
 .ctl{padding:40px 16px calc(14px + env(safe-area-inset-bottom,0px))}
 .trow h2{font-size:1.15rem}
 .brow{grid-template-columns:1fr auto}
@@ -194,6 +198,7 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 <div class="screen" id="screen">
 <button class="big" id="big" aria-label="Reproduzir"></button>
 <p class="status" id="status" role="status"></p>
+<div class="subs" id="subs" aria-hidden="true"></div>
 <div class="topbar" id="topbar">
 <button class="back" id="close" aria-label="Voltar"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><span class="vsep"></span><span class="badge">CN</span>
 </div>
@@ -203,7 +208,7 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 <div class="brow">
 <div class="bl"><button class="btn" id="mf" aria-pressed="false"></button><button class="btn" id="mr" hidden>Recomeçar do início</button></div>
 <div class="bc"><button class="ic" id="rew" aria-label="Voltar 10 segundos"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="15.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700">10</text></svg></button><button class="ic" id="pp" aria-label="Reproduzir ou pausar"></button><button class="ic" id="fwd" aria-label="Avançar 10 segundos"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="15.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700">10</text></svg></button></div>
-<div class="br"><button class="spd" id="spd" aria-label="Velocidade de reprodução">1×</button><button class="ic" id="mute" aria-label="Ativar/desativar som"></button><label class="cc" title="Legendas"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8.5h8M8 12h5"/></svg><select id="subtitle" aria-label="Selecionar legenda" hidden><option value="-1">Legendas: desligadas</option></select></label><button class="ic" id="fs" aria-label="Tela cheia"></button></div>
+<div class="br"><button class="spd" id="subsz" hidden aria-label="Tamanho da legenda" title="Tamanho da legenda">Aa</button><button class="spd" id="spd" aria-label="Velocidade de reprodução">1×</button><button class="ic" id="mute" aria-label="Ativar/desativar som"></button><label class="cc" title="Legendas"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8.5h8M8 12h5"/></svg><select id="subtitle" aria-label="Selecionar legenda" hidden><option value="-1">Legendas: desligadas</option></select></label><button class="ic" id="fs" aria-label="Tela cheia"></button></div>
 </div>
 </div>
 </div>
@@ -254,7 +259,7 @@ const M=[
 {t:"Séance",g:"Suspense",y:2000,m:96,a:"16",h:25,x:"50%",p:"Uma mulher com poderes mediúnicos e seu marido engenheiro de som acabam se envolvendo em um sequestro acidental, passando a ser assombrados pela culpa e por fenômenos sobrenaturais perturbadores.",img:CAPAS+"seance.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/seance.mp4",subtitles:[{src:"legendas/seance-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"7 Women",g:"Drama",y:1966,m:87,a:"14",h:20,x:"70%",p:"Em 1935, no norte da China, a chegada de uma médica franca e cética abala a rotina rígida de uma missão americana isolada quando um senhor da guerra e seus bandidos avançam sobre a região.",img:CAPAS+"7-women.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/7-women.mp4",subtitles:[{src:"legendas/7-women-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Close-Up",g:"Documentário",y:1990,m:98,a:"L",h:20,x:"70%",p:"Em Teerã, o cinéfilo desempregado Hossein Sabzian engana uma família ao se passar pelo famoso diretor Mohsen Makhmalbaf, levando à sua prisão e a um julgamento real que mistura ficção e realidade para explorar identidade, arte e dignidade humana.",img:CAPAS+"close-up.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/close-up.mp4",subtitles:[{src:"legendas/close-up-pt2.vtt",lang:"pt-BR",label:"Português"}]},
-{t:"Fat Girl",g:"Drama",y:2001,m:86,a:"18",h:20,x:"70%",p:"Durante as férias de verão na França, duas irmãs adolescentes com relações complexas entre si — a mais nova, acima do peso e observadora, e a mais velha, atraente e impulsiva — vivem experiências marcantes de amadurecimento que culminam em um encontro inesperado e perturbador.",img:CAPAS+"fat-girl.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/fat-girl.mp4",subtitles:[{src:"legendas/fat-girl-pt.vtt",lang:"pt-BR",label:"Português"}]},
+{t:"Fat Girl",g:"Drama",y:2001,m:86,a:"18",h:20,x:"70%",p:"Durante as férias de verão na França, duas irmãs adolescentes com relações complexas entre si — a mais nova, acima do peso e observadora, e a mais velha, atraente e impulsiva — vivem experiências marcantes de amadurecimento que culminam em um encontro inesperado e perturbador.",img:CAPAS+"fat-girl.jpg",driveId:"1bHINZh1OKdi-mTi2Ic1LXtFvRgkHXue0",subtitles:[{src:"legendas/fat-girl-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Showgirls",g:"Drama",y:1995,m:128,a:"18",h:30,x:"60%",p:"A jovem e ambiciosa Nomi Malone chega a Las Vegas com o sonho de se tornar uma grande dançarina, mas logo descobre que alcançar o estrelato nos cassinos exige manipulações, rivalidades implacáveis e sacrifícios extremos.",img:CAPAS+"showgirls.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/showgirls.mp4",subtitles:[{src:"legendas/showgirls-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"My Darling Clementine",g:"Faroeste",y:1946,m:97,a:"12",h:20,x:"70%",p:"Após o roubo de seu gado e o assassinato do irmão mais novo, Wyatt Earp assume o posto de xerife em Tombstone e se vê envolvido na chegada de Clementine Carter e no conflito com os Clanton que culmina no tiroteio do O.K. Corral.",img:CAPAS+"my-darling-clementine.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/my-darling-clementine.mp4",subtitles:[{src:"legendas/my-darling-clementine-pt.vtt",lang:"pt-BR",label:"Português"}]},
 {t:"Les savates du bon Dieu",g:"Drama",y:2000,m:104,a:"14",h:20,x:"70%",p:"Em um vilarejo isolado nas montanhas da França, dois andarilhos marginais — um velho cigano e um jovem em busca de rumo — travam conversas filosóficas e atravessam encontros singulares enquanto seguem estrada a pé.",img:CAPAS+"les-savates-du-bon-dieu.jpg",src:"https://desktop-g2jklud.taile9cab4.ts.net/les-savates-du-bon-dieu.mp4",subtitles:[{src:"legendas/les-savates-du-bon-dieu-pt.vtt",lang:"pt-BR",label:"Português"}]},
@@ -406,7 +411,7 @@ function startHero(){
 function cardHTML(o){
   const p=pct(o),ip=inProgress(o),w=p>=.95,inList=favs.has(o.id);
   const tag=ip?"Continuar":w?"Assistido":"";
-  return '<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+esc(o.t)+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+esc(sty(o))+'">'+(o.img?'':'<b>'+esc(o.t)+'</b>')+(ip?'<span class="prog"><i style="width:'+Math.round(p*100)+'%"></i></span>':'')+'</div></button>'+(tag?'<span class="tag">'+tag+'</span>':'')+'<button class="kebab" data-kb="'+o.id+'" aria-label="Opções: '+esc(o.t)+'" aria-haspopup="true">'+IC.dots+'</button><div class="pop" hidden><button data-fav="'+o.id+'">'+(inList?'Remover da minha lista':'Adicionar à minha lista')+'</button></div></article>';
+  return '<article class="card"><button class="open" data-open="'+o.id+'" aria-label="Abrir '+esc(o.t)+'"><div class="poster'+(o.img?' has-img':'')+'" style="'+esc(sty(o))+'">'+(o.img?'':'<b>'+esc(o.t)+'</b>')+(ip?'<span class="prog"><i style="width:'+Math.round(p*100)+'%"></i></span>':'')+'</div></button>'+(tag?'<span class="tag">'+tag+'</span>':'')+'<button class="kebab" data-kb="'+o.id+'" aria-label="Opções: '+esc(o.t)+'" aria-haspopup="true">'+IC.dots+'</button><div class="pop" hidden><button data-fav="'+o.id+'">'+(inList?'Remover da minha lista':'Adicionar à minha lista')+'</button>'+((ip||w)?'<button data-clear="'+o.id+'">'+(ip?'Remover de Continuar assistindo':'Marcar como não assistido')+'</button>':'')+'</div></article>';
 }
 
 function railHTML(k,title,L){
@@ -480,7 +485,7 @@ document.addEventListener("click",e=>{
   const t=e.target;
   const c=t.closest("[data-c]"),o=t.closest("[data-open]"),f=t.closest("[data-fav]");
   const kb=t.closest("[data-kb]"),ar=t.closest("[data-arr]"),dt=t.closest("[data-dot]");
-  const rd=t.closest("[data-rand]"),dc=t.closest("[data-dclose]");
+  const rd=t.closest("[data-rand]"),dc=t.closest("[data-dclose]"),cl=t.closest("[data-clear]");
   if(!kb&&!t.closest(".pop"))document.querySelectorAll(".pop").forEach(p=>{p.hidden=true});
   if(dc)closeDrawer();
   else if(c){closeDrawer();setFilter(c.dataset.c)}
@@ -495,6 +500,7 @@ document.addEventListener("click",e=>{
     document.querySelectorAll(".pop").forEach(x=>{x.hidden=true});
     p.hidden=!was;
   }
+  else if(cl){delete prog[M[+cl.dataset.clear].t];saveProg();renderAll()}
   else if(f)toggleFav(+f.dataset.fav);
   else if(ar){
     const r=ar.parentElement.querySelector(".rail");
@@ -581,6 +587,31 @@ function setPlay(on){
   }
 }
 
+let subTrack=null;
+function renderSubs(){
+  const box=$("#subs");
+  box.textContent="";
+  if(!subTrack)return;
+  Array.from(subTrack.activeCues||[]).forEach(c=>{
+    const d=document.createElement("div"),sp=document.createElement("span");
+    sp.className="sl";
+    sp.appendChild(c.getCueAsHTML?c.getCueAsHTML():document.createTextNode(c.text));
+    d.appendChild(sp);
+    box.appendChild(d);
+  });
+}
+// Legenda desenhada pelo site: "hidden" carrega o arquivo, mas não deixa o navegador desenhar.
+function useSub(i){
+  if(subTrack)subTrack.oncuechange=null;
+  subTrack=null;
+  if(vid){
+    const trs=Array.from(vid.querySelectorAll("track")).map(t=>t.track);
+    trs.forEach((t,k)=>{t.mode=k===i?"hidden":"disabled"});
+    if(i>=0&&trs[i]){subTrack=trs[i];subTrack.oncuechange=renderSubs}
+  }
+  renderSubs();
+}
+
 function skip(s){
   if(!vid||!Number.isFinite(vid.duration))return;
   vid.currentTime=Math.max(0,Math.min(vid.duration,vid.currentTime+s));
@@ -601,6 +632,8 @@ function toggleFs(){
     el.requestFullscreen();
   }else if(vid&&vid.webkitEnterFullscreen){
     // iPhone: só o player nativo entra em tela cheia.
+    const tk=subTrack;
+    if(tk){tk.mode="showing";vid.addEventListener("webkitendfullscreen",()=>{if(subTrack===tk)tk.mode="hidden"},{once:true})}
     vid.webkitEnterFullscreen();
   }
 }
@@ -629,7 +662,8 @@ function openMovie(o){
 
   $("#status").textContent="";
   $("#spd").textContent="1×";
-  $("#subtitle").hidden=true;
+  useSub(-1);
+  $("#subtitle").hidden=$("#subsz").hidden=true;
   $("#subtitle").innerHTML='<option value="-1">Legendas: desligadas</option>';
 
   // Arquivo direto (src, com token se for do seu PC) ou vídeo do Drive via Render.
@@ -640,6 +674,7 @@ function openMovie(o){
   const startAt=sp&&inProgress(o)?Math.max(0,sp.t-3):0;
   $("#mr").hidden=!startAt;
   lastSave=Date.now();
+  let initSub=-1;
 
   if(url){
     const v=document.createElement("video");
@@ -656,16 +691,6 @@ function openMovie(o){
       tr.src=sub.src;
       tr.srclang=sub.lang||"pt";
       tr.label=sub.label||sub.lang||"Legenda";
-      if(sub.default||(i===0&&subPref()))tr.default=true;
-
-      tr.addEventListener("load",()=>{
-        try{
-          const track=tr.track;
-          for(const cue of Array.from(track.cues||[])){
-            if(cue.line==="auto"||cue.line===-1)cue.line=-3;
-          }
-        }catch(e){}
-      });
 
       v.appendChild(tr);
 
@@ -676,9 +701,9 @@ function openMovie(o){
     });
 
     if((o.subtitles||[]).length){
-      $("#subtitle").hidden=false;
+      $("#subtitle").hidden=$("#subsz").hidden=false;
       const def=(o.subtitles||[]).findIndex((x,i)=>x.default||(i===0&&subPref()));
-      if(def>=0)$("#subtitle").value=String(def);
+      if(def>=0){$("#subtitle").value=String(def);initSub=def}
     }
 
     v.addEventListener("play",()=>{
@@ -766,6 +791,7 @@ function openMovie(o){
 
     s.prepend(v);
     vid=v;
+    useSub(initSub);
   }else{
     $("#status").textContent=o.driveId&&!MEDIA_OK
       ?"Este filme depende do servidor do Drive, que não está configurado."
@@ -790,6 +816,7 @@ function closeMovie(){
 
   const old=vid;
   vid=null;
+  useSub(-1);
   playing=false;
   isSeeking=false;
   pendingSeekTime=null;
@@ -938,10 +965,22 @@ $("#subtitle").addEventListener("change",()=>{
   const selected=Number($("#subtitle").value);
   try{localStorage.setItem("cn-sub",selected>=0?"1":"0")}catch(e){}
 
-  Array.from(vid.textTracks).forEach((t,i)=>{
-    t.mode=i===selected?"showing":"disabled";
-  });
+  useSub(selected);
 });
+
+const SUBSZ=[["Pequena",.75],["Média",1],["Grande",1.35],["Extra grande",1.8]];
+let szi=1;
+try{const raw=localStorage.getItem("cn-subsz");if(raw!==null&&SUBSZ[+raw])szi=+raw}catch(e){}
+const applySz=()=>document.documentElement.style.setProperty("--subsz",SUBSZ[szi][1]);
+applySz();
+$("#subsz").onclick=()=>{
+  showControls();
+  szi=(szi+1)%SUBSZ.length;
+  applySz();
+  try{localStorage.setItem("cn-subsz",szi)}catch(e){}
+  $("#status").textContent="Tamanho da legenda: "+SUBSZ[szi][0];
+  setTimeout(()=>{if($("#status").textContent.startsWith("Tamanho"))$("#status").textContent=""},1500);
+};
 
 $("#spd").onclick=()=>{
   showControls();
