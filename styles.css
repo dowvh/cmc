@@ -79,7 +79,7 @@ button.ib:hover{background:#ffffff1f}
 .count{font-size:.9rem;font-weight:400;color:var(--muted);margin-left:10px}
 #sortSel{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:6px 10px}
 .rail-wrap{position:relative}
-.rail{display:flex;gap:clamp(10px,1.25vw,20px);overflow-x:auto;padding:0 var(--pad) 4px;scroll-snap-type:x proximity;scroll-padding-left:var(--pad);scrollbar-width:none}
+.rail{display:flex;gap:clamp(10px,1.25vw,20px);overflow-x:auto;padding:4px var(--pad) 4px;margin-top:-4px;scroll-snap-type:x proximity;scroll-padding-left:var(--pad);scrollbar-width:none}
 .rail::-webkit-scrollbar{display:none}
 .arr{position:absolute;top:0;bottom:4px;width:56px;z-index:4;border:0;color:#fff;font-size:2.4rem;opacity:0;transition:opacity .2s}
 .arr:focus-visible{opacity:1}
