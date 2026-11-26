@@ -1,0 +1,1130 @@
+"use strict";
+(() => {
+
+/* =========================================================
+   1. CONFIGURAÇÃO — edite só este bloco
+   ========================================================= */
+const CONFIG = {
+  capas: "capas/",
+  legendas: "legendas/",
+  // Servidor do Render (só para filmes que ainda usam "drive"). Deixe "" quando migrar o último.
+  mediaBase: "https://cmc-3ke1.onrender.com",
+  // Servidor de vídeos do seu PC (Caddy + Tailscale Funnel).
+  // O token precisa ser IGUAL ao "t=..." do Caddyfile. Atenção: ele fica visível no código da página.
+  tsHost: "desktop-g2jklud.taile9cab4.ts.net",
+  token: "CN-8fK2mQ9xT7vP4zR6wB3nL5",
+  // Link da planilha publicada (https://docs.google.com/...). "" = usa só catalogo.js.
+  // Colunas: id, titulo, genero, ano, minutos, idade, cor, sinopse, capa, legenda, drive, video
+  planilha: ""
+};
+
+const CONTROLS_DELAY = 3000;   // ms até esconder os controles do player
+const SEEK_TIMEOUT = 8000;     // ms até desistir de um "avançar" que não completou
+const SPEEDS = [1, 1.25, 1.5, 2, .75];
+const SUBSZ = [["Pequena", .75], ["Média", 1], ["Grande", 1.35], ["Extra grande", 1.8]];
+const DRIVE_ID = /^[A-Za-z0-9_-]{15,80}$/;
+const MEDIA = (() => {
+  try { const u = new URL(CONFIG.mediaBase); return u.protocol === "https:" ? u.origin : ""; }
+  catch { return ""; }
+})();
+
+/* =========================================================
+   2. UTILITÁRIOS
+   ========================================================= */
+const $ = s => document.querySelector(s);
+const E = Object.fromEntries([...document.querySelectorAll("[id]")].map(n => [n.id, n]));
+
+const norm = s => String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const slug = s => norm(s).replace(/['’`]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80).replace(/-+$/, "");
+const dur = m => m < 60 ? m + "min" : Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "min";
+const idade = a => a === "L" ? "Livre" : a + " anos";
+const hueOf = t => { let h = 0; for (const c of t) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+const decadeNum = d => +d.match(/\d+/)[0];
+const fmt = s => {
+  s = Math.floor(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = String(s % 60).padStart(2, "0");
+  return h ? h + ":" + String(m).padStart(2, "0") + ":" + r : m + ":" + r;
+};
+
+/* --- Validação de endereços (só https ou caminhos relativos simples) --- */
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+function httpsUrl(u) {
+  try {
+    const x = new URL(String(u ?? "").trim());
+    return x.protocol === "https:" && !x.username && !x.password ? x.href : "";
+  } catch { return ""; }
+}
+
+// Devolve os segmentos já codificados ou null se o caminho for suspeito (esquema, "//", "..", controle).
+function pathSegs(p) {
+  p = String(p ?? "").trim().replace(/\\/g, "/");
+  if (!p || p.startsWith("//") || SCHEME.test(p) || /[\u0000-\u001f]/.test(p)) return null;
+  const segs = p.split("/").filter(Boolean);
+  if (!segs.length || segs.some(s => s === "." || s === "..")) return null;
+  return segs.map(s => { try { return encodeURIComponent(decodeURIComponent(s)); } catch { return encodeURIComponent(s); } });
+}
+
+function relUrl(dir, p) {
+  p = String(p ?? "").trim();
+  if (p.startsWith(dir)) p = p.slice(dir.length);
+  const segs = pathSegs(p);
+  return segs ? dir + segs.join("/") : "";
+}
+
+// Link https completo OU nome de arquivo no servidor do seu PC.
+function videoUrl(v) {
+  v = String(v ?? "").trim();
+  if (!v) return "";
+  if (SCHEME.test(v)) return httpsUrl(v);
+  const segs = pathSegs(v);
+  return segs ? "https://" + CONFIG.tsHost + "/" + segs.join("/") : "";
+}
+
+// Acrescenta o token aos links do seu servidor (Caddy).
+function mediaUrl(u) {
+  try {
+    const x = new URL(u, location.href);
+    if (CONFIG.token && x.hostname === CONFIG.tsHost) x.searchParams.set("t", CONFIG.token);
+    return x.href;
+  } catch { return u; }
+}
+
+const extrairDriveId = u => {
+  u = String(u ?? "").trim();
+  const m = u.match(/\/d\/([-\w]+)|[?&]id=([-\w]+)/);
+  return m ? (m[1] || m[2]) : u;
+};
+
+/* =========================================================
+   3. ARMAZENAMENTO LOCAL (progresso, lista, preferências)
+   ========================================================= */
+const K = { prog: "cn-prog-v2", favs: "cn-favs-v2", sub: "cn-sub", subsz: "cn-subsz", legProg: "cn-prog", legFavs: "cn-favs" };
+
+const store = {
+  get(k, fb) { try { const v = localStorage.getItem(k); return v === null ? fb : JSON.parse(v); } catch { return fb; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* modo privado / cheio */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* ignora */ } }
+};
+
+const progValido = v => v && typeof v === "object" && Number.isFinite(v.t) && Number.isFinite(v.d) && v.d > 0 && v.t >= 0;
+
+function limparProg(obj) {
+  const out = Object.create(null);
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj)) {
+      if (progValido(v)) out[k] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0 };
+    }
+  }
+  return out;
+}
+const limparFavs = arr => new Set(Array.isArray(arr) ? arr.filter(x => typeof x === "string" && x.length <= 100) : []);
+
+// Chaves = id estável do filme (ver atribuirChaves), nunca o índice nem o título.
+let favs = limparFavs(store.get(K.favs, []));
+let prog = limparProg(store.get(K.prog, {}));
+const saveFavs = () => store.set(K.favs, [...favs]);
+const saveProg = () => store.set(K.prog, prog);
+
+const pct = o => { const p = prog[o.key]; return p && p.d ? Math.min(1, p.t / p.d) : 0; };
+const inProgress = o => { const p = pct(o); return p > .02 && p < .95; };
+const watched = o => pct(o) >= .95;
+
+const subPref = () => store.get(K.sub, 1) !== 0;
+let szi = (() => { const r = store.get(K.subsz, 1); return Number.isInteger(r) && SUBSZ[r] ? r : 1; })();
+
+/* =========================================================
+   4. CATÁLOGO: normalização, chaves estáveis, migração
+   ========================================================= */
+let M = [];
+let byKey = new Map();
+
+// Converte qualquer item (catalogo.js ou planilha) no formato interno, validando todos os links.
+function normalizar(r) {
+  const t = String(r.t ?? "").trim();
+  if (!t) return null;
+  const y = Math.round(Number(r.y)), m = Math.round(Number(r.m));
+  const a = String(r.a ?? "").trim(), h = Number(r.h), x = String(r.x ?? "").trim();
+  const capa = String(r.capa ?? "").trim();
+  const drive = extrairDriveId(r.drive);
+  const o = {
+    id: String(r.id ?? "").trim(),
+    t,
+    g: String(r.g ?? "").trim(),
+    y: y > 0 ? y : "",
+    m: m > 0 ? m : 100,
+    a: /^l(ivre)?$/i.test(a) ? "L" : /^\d{1,2}$/.test(a) ? a : "12",
+    h: Number.isFinite(h) ? h : 0,
+    x: /^\d{1,3}(\.\d+)?%$/.test(x) ? x : "70%",
+    p: String(r.p ?? "").trim(),
+    img: SCHEME.test(capa) ? httpsUrl(capa) : relUrl(CONFIG.capas, capa),
+    src: videoUrl(r.video),
+    driveId: DRIVE_ID.test(drive) ? drive : "",
+    subtitles: []
+  };
+  // Legendas: só caminhos relativos (arquivos de outro site exigiriam CORS e quebrariam no <track>).
+  const leg = relUrl(CONFIG.legendas, r.legenda);
+  if (leg) o.subtitles.push({ src: leg, lang: "pt-BR", label: "Português" });
+  return o;
+}
+
+// Chave estável: id explícito, senão slug do título; se repetir, acrescenta o ano.
+function atribuirChaves(lista) {
+  const usadas = new Set();
+  for (const o of lista) {
+    const base = slug(o.id) || slug(o.t) || "filme";
+    let k = base;
+    if (usadas.has(k) && o.y) k = base + "-" + o.y;
+    for (let n = 2; usadas.has(k); n++) k = base + "-" + n;
+    usadas.add(k);
+    o.key = k;
+  }
+}
+
+function setCatalogo(lista) {
+  atribuirChaves(lista);
+  M = lista;
+  byKey = new Map(lista.map(o => [o.key, o]));
+}
+
+// Traz para o formato novo o que foi salvo antes (progresso por título, lista por índice).
+function migrarLegado() {
+  const velho = store.get(K.legProg, null);
+  if (velho && typeof velho === "object" && !Array.isArray(velho)) {
+    let sobrou = false;
+    for (const [titulo, v] of Object.entries(velho)) {
+      const o = M.find(x => x.t === titulo);
+      if (!o) { sobrou = true; continue; }
+      if (!prog[o.key] && progValido(v)) prog[o.key] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0 };
+      delete velho[titulo];
+    }
+    saveProg();
+    if (sobrou) store.set(K.legProg, velho); else store.del(K.legProg);
+  }
+  const velhosFavs = store.get(K.legFavs, null);
+  if (Array.isArray(velhosFavs)) {
+    velhosFavs.forEach(i => { const o = M[+i]; if (o) favs.add(o.key); });
+    saveFavs();
+    store.del(K.legFavs);
+  }
+}
+
+const decadeOf = o => {
+  const y = Number(o.y);
+  return Number.isFinite(y) && y > 0 ? "Década de " + (Math.floor(y / 10) * 10) : "";
+};
+
+/* =========================================================
+   5. ÍCONES
+   ========================================================= */
+const svgS = (p, n) => '<svg viewBox="0 0 24 24" width="' + n + '" height="' + n + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+const IC = {
+  playFill: n => '<svg viewBox="0 0 24 24" width="' + n + '" height="' + n + '" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+  pauseFill: n => '<svg viewBox="0 0 24 24" width="' + n + '" height="' + n + '" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+  play: '<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><path d="M7 4v16l13-8z" fill="currentColor"/></svg>',
+  pause: svgS('<path d="M8 4v16M16 4v16" stroke-width="1.9"/>', 38),
+  vol: svgS('<path d="M3 9.5v5h4l5 4v-13l-5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a8 8 0 0 1 0 11"/>', 28),
+  mute: svgS('<path d="M3 9.5v5h4l5 4v-13l-5 4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>', 28),
+  fs: svgS('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>', 28),
+  heart: '<svg class="heart" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.4-9.4A5.2 5.2 0 0 1 12 6.4a5.2 5.2 0 0 1 9.4 4.7C19.5 15.9 12 20.5 12 20.5z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  check: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  dots: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>'
+};
+function setIcon(el, id, html) {
+  if (el.dataset.i !== id) { el.dataset.i = id; el.innerHTML = html; }
+}
+
+/* =========================================================
+   6. RENDERIZAÇÃO (destaque, faixas, grade, menu lateral)
+   ========================================================= */
+let filter = "Todos", q = "", sortBy = "", hi = 0, heroTimer = null;
+const SORTS = {
+  az: (a, b) => a.t.localeCompare(b.t),
+  new: (a, b) => (+b.y || 0) - (+a.y || 0),
+  old: (a, b) => (+a.y || 0) - (+b.y || 0),
+  short: (a, b) => a.m - b.m
+};
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+const sty = o => "--h:" + (+o.h || 0) + ";--x:" + String(o.x).replace(/[^0-9.%]/g, "") +
+  (o.img ? ";--img:url('" + o.img.replace(/['()]/g, c => "%" + c.charCodeAt(0).toString(16)) + "')" : "");
+
+const meta = o => (o.y ? "<span>" + esc(o.y) + "</span>" : "") + "<span>" + dur(o.m) + "</span>" +
+  (o.g ? "<span>" + esc(o.g) + "</span>" : "") + "<span>" + esc(idade(o.a)) + "</span>";
+
+function renderHero() {
+  const L = M.slice(0, 6);
+  E.hero.hidden = !!(filter !== "Todos" || q) || !L.length;
+  if (E.hero.hidden) return;
+  const n = hi % L.length, o = L[n], f = favs.has(o.key), k = esc(o.key);
+  E.hero.style.cssText = sty(o);
+  E.hero.innerHTML = '<div class="hero-art"></div><div class="hero-body"><h1>' + esc(o.t) + '</h1><div class="meta">' + meta(o) + '</div><p>' + esc(o.p) +
+    '</p><div class="actions"><button class="watch" data-open="' + k + '" aria-label="' + (inProgress(o) ? "Continuar" : "Assistir") + " " + esc(o.t) + '">' + IC.playFill(22) + (inProgress(o) ? "Continuar" : "Assistir") +
+    '</button><button class="plus" data-fav="' + k + '" aria-pressed="' + f + '" aria-label="' + (f ? "Remover da minha lista" : "Adicionar à minha lista") + '">' + (f ? IC.check : IC.plus) +
+    '</button></div></div><div class="dots">' + L.map((_, i) => '<button class="dot' + (i === n ? " on" : "") + '" data-dot="' + i + '" aria-label="Destaque ' + (i + 1) + '"' + (i === n ? ' aria-current="true"' : "") + '></button>').join("") + "</div>";
+}
+
+function startHero() {
+  clearInterval(heroTimer);
+  heroTimer = setInterval(() => {
+    if (document.hidden || E.hero.hidden || reduceMotion.matches || E.modal.classList.contains("open")) return;
+    if (E.hero.matches(":hover,:focus-within")) return;   // não troca enquanto a pessoa interage
+    hi = (hi + 1) % Math.min(6, M.length);
+    renderHero();
+  }, 8000);
+}
+
+function cardHTML(o) {
+  const p = pct(o), ip = inProgress(o), w = p >= .95, inList = favs.has(o.key), k = esc(o.key);
+  const tag = ip ? "Continuar" : w ? "Assistido" : "";
+  return '<article class="card"><button class="open" data-open="' + k + '" aria-label="Abrir ' + esc(o.t) + '"><span class="poster' + (o.img ? " has-img" : "") + '" style="' + esc(sty(o)) + '">' +
+    (o.img ? "" : "<b>" + esc(o.t) + "</b>") + (ip ? '<span class="prog"><i style="width:' + Math.round(p * 100) + '%"></i></span>' : "") + "</span></button>" +
+    (tag ? '<span class="tag">' + tag + "</span>" : "") +
+    '<button class="kebab" data-kb aria-label="Opções: ' + esc(o.t) + '" aria-expanded="false">' + IC.dots + "</button>" +
+    '<div class="pop" hidden><button data-fav="' + k + '">' + (inList ? "Remover da minha lista" : "Adicionar à minha lista") + "</button>" +
+    ((ip || w) ? '<button data-clear="' + k + '">' + (ip ? "Remover de Continuar assistindo" : "Marcar como não assistido") + "</button>" : "") + "</div></article>";
+}
+
+function railHTML(k, title, L) {
+  return '<section class="row"><h2>' + esc(title) + '</h2><div class="rail-wrap"><button class="arr l" data-arr="-1" aria-label="Anteriores">‹</button><div class="rail" data-k="' + esc(k) + '">' +
+    L.map(cardHTML).join("") + '</div><button class="arr r" data-arr="1" aria-label="Próximos">›</button></div></section>';
+}
+
+function visible() {
+  const L = M.filter(o => (
+    filter === "Todos" ||
+    (filter === "Minha lista" ? favs.has(o.key) :
+      filter.startsWith("Década de ") ? decadeOf(o) === filter : o.g === filter)
+  ) && norm(o.t + " " + o.g + " " + o.y).includes(norm(q)));
+  if (SORTS[sortBy]) L.sort(SORTS[sortBy]);
+  return L;
+}
+
+function renderRows() {
+  const R = E.rows, sc = {};
+  R.querySelectorAll(".rail").forEach(r => { sc[r.dataset.k] = r.scrollLeft; });
+  const grid = filter !== "Todos" || q;
+  R.className = grid ? "pad" : "";
+  let h = "";
+  if (!M.length) {
+    h = '<p class="empty">Nenhum filme cadastrado.</p>';
+  } else if (grid) {
+    const L = visible();
+    const opts = [["", "Ordem padrão"], ["az", "A–Z"], ["new", "Mais recentes"], ["old", "Mais antigos"], ["short", "Mais curtos"]]
+      .map(([v, l]) => '<option value="' + v + '"' + (v === sortBy ? " selected" : "") + ">" + l + "</option>").join("");
+    const vazio = filter === "Minha lista" && !q
+      ? "Sua lista está vazia. Use o menu ⋮ de um filme para adicioná-lo aqui."
+      : "Nenhum filme encontrado. Tente outro nome ou escolha outra categoria.";
+    h = '<section class="row"><div class="gh"><h2>' + esc(q ? "Resultados para “" + q + "”" : filter) + '<span class="count">' + L.length + (L.length === 1 ? " filme" : " filmes") +
+      '</span></h2><select id="sortSel" aria-label="Ordenar filmes">' + opts + "</select></div>" +
+      (L.length ? '<div class="gridv">' + L.map(cardHTML).join("") + "</div>" : '<p class="empty">' + vazio + "</p>") + "</section>";
+  } else {
+    const rows = [];
+    const cont = M.filter(inProgress).sort((a, b) => prog[b.key].u - prog[a.key].u);
+    if (cont.length) rows.push(["cont", "Continuar assistindo", cont]);
+    const mine = M.filter(o => favs.has(o.key));
+    if (mine.length) rows.push(["mine", "Minha lista", mine]);
+    rows.push(["rec", "Recomendados para você", M]);
+    const byG = {};
+    M.forEach(o => { if (o.g) (byG[o.g] = byG[o.g] || []).push(o); });
+    Object.entries(byG).filter(([, l]) => l.length > 1).sort((a, b) => b[1].length - a[1].length).forEach(([g, l]) => rows.push(["g:" + g, g, l]));
+    const curtos = M.filter(o => o.m <= 90);
+    if (curtos.length > 1) rows.push(["curtos", "Filmes curtos (até 1h30)", curtos]);
+    const dec = {};
+    M.forEach(o => { const d = decadeOf(o); if (d) (dec[d] = dec[d] || []).push(o); });
+    Object.keys(dec).sort((a, b) => decadeNum(a) - decadeNum(b)).forEach(d => { if (dec[d].length > 1) rows.push(["d:" + d, d, dec[d]]); });
+    h = rows.map(r => railHTML(r[0], r[1], r[2])).join("");
+  }
+  R.innerHTML = h;
+  R.querySelectorAll(".rail").forEach(r => { if (sc[r.dataset.k]) r.scrollLeft = sc[r.dataset.k]; });
+}
+
+function renderDrawer() {
+  const genres = [...new Set(M.map(o => o.g).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
+  const decades = [...new Set(M.map(decadeOf).filter(Boolean))].sort((a, b) => decadeNum(a) - decadeNum(b));
+  const item = (c, l) => {
+    const on = c === filter && !q;
+    return '<button class="nav' + (on ? " on" : "") + '"' + (on ? ' aria-current="page"' : "") + ' data-c="' + esc(c) + '">' + esc(l || c) + "</button>";
+  };
+  E.drawer.innerHTML = '<button class="x2" data-dclose aria-label="Fechar menu">×</button><nav aria-label="Categorias">' +
+    item("Todos", "Início") + item("Minha lista") + '<button class="nav" data-rand>Sortear um filme</button>' +
+    "<h3>Gêneros</h3>" + genres.map(g => item(g)).join("") + "<h3>Décadas</h3>" + decades.map(d => item(d)).join("") + "</nav>";
+}
+
+function renderAll() { renderDrawer(); renderHero(); renderRows(); }
+
+/* =========================================================
+   7. FOCO, MENU LATERAL, BUSCA, PERFIL E CARTÕES
+   ========================================================= */
+const BG = ["#top", "#hero", "#rows", "footer"];    // áreas desativadas enquanto um painel está aberto
+const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
+const setInert = (sels, on) => sels.forEach(s => { const n = $(s); if (n) n.inert = on; });
+
+// Mantém o Tab dentro de um painel (menu lateral / player).
+function trapTab(e, box) {
+  if (e.key !== "Tab") return;
+  const items = [...box.querySelectorAll(FOCUSABLE)].filter(n => !n.disabled && n.getClientRects().length);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1], act = document.activeElement;
+  if (e.shiftKey && (act === first || !box.contains(act))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (act === last || !box.contains(act))) { e.preventDefault(); first.focus(); }
+}
+
+let toastTimer = 0;
+function toast(msg) {
+  E.toast.textContent = msg;
+  E.toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => E.toast.classList.remove("show"), 3500);
+}
+
+/* --- Menu lateral --- */
+function openDrawer() {
+  E.drawer.classList.add("open");
+  E.scrim.hidden = false;
+  E.menuBtn.setAttribute("aria-expanded", "true");
+  setInert(BG, true);
+  (E.drawer.querySelector(".nav.on") || E.drawer.querySelector(".x2")).focus();
+}
+function closeDrawer() {
+  if (!E.drawer.classList.contains("open")) return;
+  E.drawer.classList.remove("open");
+  E.scrim.hidden = true;
+  E.menuBtn.setAttribute("aria-expanded", "false");
+  setInert(BG, false);
+  E.menuBtn.focus();
+}
+
+/* --- Busca e filtros --- */
+function closeSearch() {
+  E.sbox.classList.remove("open");
+  E.searchBtn.setAttribute("aria-expanded", "false");
+}
+function setFilter(c) {
+  filter = c; q = ""; sortBy = "";
+  E.q.value = "";
+  closeSearch();
+  renderAll();
+  scrollTo({ top: 0 });
+}
+
+/* --- Opções de cada cartão (⋮) --- */
+function closePops(restoreFocus) {
+  document.querySelectorAll(".pop:not([hidden])").forEach(p => {
+    p.hidden = true;
+    const kb = p.previousElementSibling;
+    if (kb) { kb.setAttribute("aria-expanded", "false"); if (restoreFocus) kb.focus(); }
+  });
+}
+
+/* --- Perfil: exportar / importar / limpar dados locais --- */
+function openProfile() {
+  const naLista = M.filter(o => favs.has(o.key)).length, andamento = M.filter(inProgress).length;
+  E.pinfo.textContent = naLista + " na lista · " + andamento + " em andamento · salvos só neste navegador";
+  E.profileMenu.hidden = false;
+  E.profileBtn.setAttribute("aria-expanded", "true");
+  E.profileMenu.querySelector("[role=menuitem]").focus();
+}
+function closeProfile(restoreFocus) {
+  if (E.profileMenu.hidden) return;
+  E.profileMenu.hidden = true;
+  E.profileBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) E.profileBtn.focus();
+}
+
+function exportarDados() {
+  const dados = { app: "CineNoite", versao: 2, exportadoEm: new Date().toISOString(), lista: [...favs], progresso: prog };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "cinenoite-dados-" + new Date().toISOString().slice(0, 10) + ".json";
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("Dados exportados.");
+}
+
+async function importarDados(file) {
+  try {
+    if (file.size > 1e6) throw new Error("arquivo grande demais");
+    const d = JSON.parse(await file.text());
+    if (!d || d.app !== "CineNoite") throw new Error("formato desconhecido");
+    limparFavs(d.lista).forEach(k => favs.add(k));
+    for (const [k, v] of Object.entries(limparProg(d.progresso))) {
+      if (!prog[k] || v.u > prog[k].u) prog[k] = v;
+    }
+    saveFavs(); saveProg(); renderAll();
+    toast("Dados importados.");
+  } catch {
+    toast("Arquivo inválido. Use um arquivo exportado pelo CineNoite.");
+  }
+}
+
+const ACOES = {
+  export: exportarDados,
+  import: () => E.importFile.click(),
+  clearProg() {
+    if (!confirm("Apagar o progresso de todos os filmes?")) return;
+    prog = Object.create(null); saveProg(); renderAll(); toast("Progresso apagado.");
+  },
+  clearList() {
+    if (!confirm("Esvaziar a Minha lista?")) return;
+    favs = new Set(); saveFavs(); renderAll(); toast("Lista esvaziada.");
+  },
+  clearAll() {
+    if (!confirm("Apagar progresso, lista e preferências deste navegador?")) return;
+    prog = Object.create(null); favs = new Set();
+    [K.prog, K.favs, K.sub, K.subsz, K.legProg, K.legFavs].forEach(store.del);
+    szi = 1; applySz(); renderAll(); toast("Dados locais apagados.");
+  }
+};
+
+function toggleFav(key) {
+  favs.has(key) ? favs.delete(key) : favs.add(key);
+  saveFavs();
+  renderAll();
+  if (cur && cur.key === key) fillFav();
+}
+
+/* --- Eventos de clique (delegação) --- */
+document.addEventListener("click", e => {
+  const t = e.target;
+  const c = t.closest("[data-c]"), o = t.closest("[data-open]"), f = t.closest("[data-fav]");
+  const kb = t.closest("[data-kb]"), ar = t.closest("[data-arr]"), dt = t.closest("[data-dot]");
+  const rd = t.closest("[data-rand]"), dc = t.closest("[data-dclose]"), cl = t.closest("[data-clear]");
+  if (!kb && !t.closest(".pop")) closePops();
+  if (!t.closest(".pwrap")) closeProfile();
+
+  if (dc) closeDrawer();
+  else if (c) { closeDrawer(); setFilter(c.dataset.c); }
+  else if (rd) {
+    closeDrawer();
+    const pool = M.filter(x => !watched(x));
+    const L = pool.length ? pool : M;
+    openMovie(L[Math.floor(Math.random() * L.length)]);
+  }
+  else if (kb) {
+    const p = kb.nextElementSibling, abrir = p.hidden;
+    closePops();
+    if (abrir) { p.hidden = false; kb.setAttribute("aria-expanded", "true"); p.querySelector("button").focus(); }
+  }
+  else if (cl) { delete prog[cl.dataset.clear]; saveProg(); renderAll(); }
+  else if (f) toggleFav(f.dataset.fav);
+  else if (ar) {
+    const r = ar.parentElement.querySelector(".rail");
+    r.scrollBy({ left: ar.dataset.arr * r.clientWidth * .85, behavior: "smooth" });
+  }
+  else if (dt) { hi = +dt.dataset.dot; renderHero(); startHero(); }
+  else if (o) openMovie(byKey.get(o.dataset.open));
+});
+
+document.addEventListener("change", e => {
+  if (e.target.id === "sortSel") { sortBy = e.target.value; renderRows(); }
+});
+
+// Se o foco sair do menu do perfil por teclado, ele fecha.
+document.addEventListener("focusin", e => {
+  if (!E.profileMenu.hidden && !e.target.closest(".pwrap")) closeProfile();
+});
+
+E.menuBtn.onclick = openDrawer;
+E.logo.onclick = () => setFilter("Todos");
+E.listBtn.onclick = () => setFilter("Minha lista");
+E.searchBtn.onclick = () => {
+  const open = E.sbox.classList.toggle("open");
+  E.searchBtn.setAttribute("aria-expanded", String(open));
+  if (open) E.q.focus(); else { E.q.value = ""; q = ""; renderAll(); }
+};
+E.q.addEventListener("input", e => { q = e.target.value; renderAll(); });
+E.q.addEventListener("keydown", e => {
+  if (e.key === "Escape") { E.q.value = ""; q = ""; closeSearch(); renderAll(); E.searchBtn.focus(); }
+});
+
+E.profileBtn.onclick = () => E.profileMenu.hidden ? openProfile() : closeProfile(true);
+E.profileMenu.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  closeProfile(true);
+  ACOES[b.dataset.act]?.();
+});
+E.profileMenu.addEventListener("keydown", e => {
+  const items = [...E.profileMenu.querySelectorAll("[role=menuitem]")], i = items.indexOf(document.activeElement);
+  const go = n => { e.preventDefault(); items[(n + items.length) % items.length].focus(); };
+  if (e.key === "ArrowDown") go(i + 1);
+  else if (e.key === "ArrowUp") go(i - 1);
+  else if (e.key === "Home") go(0);
+  else if (e.key === "End") go(items.length - 1);
+});
+E.importFile.addEventListener("change", () => {
+  const file = E.importFile.files[0];
+  E.importFile.value = "";
+  if (file) importarDados(file);
+});
+
+addEventListener("scroll", () => E.top.classList.toggle("solid", scrollY > 40), { passive: true });
+
+/* =========================================================
+   8. PLAYER
+   ========================================================= */
+let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null;
+let controlsTimer = 0, seekWatch = 0, isSeeking = false, seekPointerId = null, pendingSeekTime = null;
+
+/* --- Controles visíveis / escondidos --- */
+function showControls() {
+  clearTimeout(controlsTimer);
+  E.screen.classList.remove("controls-hidden");
+  // Não esconde enquanto o foco estiver nos controles via teclado.
+  if (vid && !vid.paused && !vid.ended && !isSeeking && !E.screen.querySelector(":focus-visible")) {
+    controlsTimer = setTimeout(() => E.screen.classList.add("controls-hidden"), CONTROLS_DELAY);
+  }
+}
+function keepControlsVisible() {
+  clearTimeout(controlsTimer);
+  E.screen.classList.remove("controls-hidden");
+}
+
+// Zera tudo que poderia deixar a interface "presa" (arraste, seek pendente, timers).
+function resetTransient() {
+  clearTimeout(controlsTimer);
+  clearTimeout(seekWatch);
+  isSeeking = false;
+  pendingSeekTime = null;
+  seekPointerId = null;
+}
+
+/* --- Mensagem de status (texto puro, com link/botão opcionais) --- */
+function setStatus(msg, opts = {}) {
+  const s = E.status;
+  s.textContent = "";
+  if (!msg) return;
+  s.append(msg);
+  if (opts.link && /^https:/i.test(opts.link)) {
+    const a = document.createElement("a");
+    a.href = opts.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+    a.textContent = "Abrir o vídeo direto";
+    s.append(" ", a);
+  }
+  if (opts.retry) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Tentar novamente";
+    b.onclick = retryVideo;
+    s.append(" ", b);
+  }
+}
+
+function mostrarErro(v) {
+  const code = v.error && v.error.code;
+  const detalhe = code === 2 ? "A conexão foi interrompida." :
+    code === 3 ? "O navegador não conseguiu decodificar este arquivo (formato ou codec)." :
+    code === 4 ? "Não achei o vídeo neste endereço, ele está bloqueado ou o formato não é compatível." :
+    "O servidor não conseguiu entregar o vídeo.";
+  const link = v.currentSrc || v.src || "";
+  let host = "";
+  try { host = new URL(link).hostname; } catch { /* sem host */ }
+  setStatus(detalhe + " (código " + (code || "?") + (host ? ", servidor " + host : "") + ")", { link, retry: true });
+  console.warn("Erro no vídeo:", cur && cur.t, "código", code, link);
+}
+
+/* --- Progresso salvo --- */
+function saveNow() {
+  if (!vid || !cur || !Number.isFinite(vid.duration) || vid.duration <= 0) return;
+  if (vid.currentTime < 5 && !prog[cur.key]) return;
+  prog[cur.key] = { t: vid.currentTime, d: vid.duration, u: Date.now() };
+  saveProg();
+}
+addEventListener("pagehide", saveNow);
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveNow(); });
+
+/* --- Interface do player --- */
+function ui() {
+  if (!cur) return;
+  const dok = vid && Number.isFinite(vid.duration) && vid.duration > 0;
+  // Durante o arraste/seek, o timeupdate não pode devolver a barra para a posição antiga.
+  if (dok && !isSeeking && pendingSeekTime === null) pos = vid.currentTime / vid.duration;
+  const total = dok ? vid.duration : cur.m * 60;
+  E.fill.style.width = (pos * 100) + "%";
+  E.time.textContent = "-" + fmt(Math.max(0, total - pos * total));
+  E.track.setAttribute("aria-valuenow", String(Math.round(pos * 100)));
+  E.track.setAttribute("aria-valuetext", fmt(pos * total) + " de " + fmt(total));
+
+  const muted = !!(vid && vid.muted);
+  setIcon(E.mute, muted ? "m" : "v", muted ? IC.mute : IC.vol);
+  E.mute.setAttribute("aria-pressed", String(muted));
+  E.mute.setAttribute("aria-label", muted ? "Ativar som" : "Desativar som");
+
+  setIcon(E.big, playing ? "p" : "r", playing ? IC.pauseFill(26) : IC.playFill(26));
+  setIcon(E.pp, playing ? "p" : "r", playing ? IC.pause : IC.play);
+  const lbl = playing ? "Pausar" : "Reproduzir";
+  E.pp.setAttribute("aria-label", lbl);
+  E.big.setAttribute("aria-label", lbl);
+  E.screen.classList.toggle("playing", playing);
+}
+
+function setPlay(on) {
+  if (!vid) return;
+  if (!on) { vid.pause(); return; }
+  const player = vid;
+  const p = player.play();
+  if (p && p.catch) p.catch(err => {
+    if (vid !== player) return;
+    if (player.error) mostrarErro(player);
+    else setStatus("Não foi possível iniciar a reprodução.", { retry: true });
+    console.warn("Falha ao iniciar reprodução:", err);
+  });
+}
+
+function skip(s) {
+  if (!vid || !Number.isFinite(vid.duration)) return;
+  vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + s));
+}
+
+function fillFav() {
+  const f = favs.has(cur.key);
+  E.mf.setAttribute("aria-pressed", String(f));
+  E.mf.innerHTML = IC.heart + (f ? "Na minha lista" : "Minha lista");
+}
+
+/* --- Legendas (desenhadas pelo site; o navegador só carrega o arquivo) --- */
+function renderSubs() {
+  E.subs.textContent = "";
+  if (!subTrack) return;
+  Array.from(subTrack.activeCues || []).forEach(c => {
+    const d = document.createElement("div"), sp = document.createElement("span");
+    sp.className = "sl";
+    sp.appendChild(c.getCueAsHTML ? c.getCueAsHTML() : document.createTextNode(c.text));
+    d.appendChild(sp);
+    E.subs.appendChild(d);
+  });
+}
+function useSub(i) {
+  if (subTrack) subTrack.oncuechange = null;
+  subTrack = null;
+  if (vid) {
+    const trs = Array.from(vid.querySelectorAll("track")).map(t => t.track);
+    trs.forEach((t, k) => { t.mode = k === i ? "hidden" : "disabled"; });
+    if (i >= 0 && trs[i]) { subTrack = trs[i]; subTrack.oncuechange = renderSubs; }
+  }
+  E.subtitle.value = String(i);
+  renderSubs();
+}
+
+const applySz = () => document.documentElement.style.setProperty("--subsz", SUBSZ[szi][1]);
+
+/* --- Tela cheia --- */
+function toggleFs() {
+  const el = E.screen;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen();
+  else if (vid && vid.webkitEnterFullscreen) {
+    // iPhone: só o player nativo entra em tela cheia.
+    const tk = subTrack;
+    if (tk) { tk.mode = "showing"; vid.addEventListener("webkitendfullscreen", () => { if (subTrack === tk) tk.mode = "hidden"; }, { once: true }); }
+    vid.webkitEnterFullscreen();
+  }
+}
+
+/* --- Carregar / descarregar o <video> --- */
+function unloadVideo() {
+  const old = vid;
+  vid = null;
+  useSub(-1);
+  if (!old) return;
+  old.pause();
+  old.removeAttribute("src");
+  old.querySelectorAll("source,track").forEach(n => n.remove());
+  try { old.load(); } catch { /* ignora */ }
+  old.remove();
+}
+
+function loadVideo(o, resumeAt) {
+  unloadVideo();
+  resetTransient();
+  playing = false;
+  pos = 0;
+  keepControlsVisible();
+  setStatus("");
+  E.spd.textContent = "1×";
+  E.subtitle.hidden = E.subsz.hidden = true;
+  E.subtitle.innerHTML = '<option value="-1">Legendas: desligadas</option>';
+
+  // Arquivo direto (com token se for do seu PC) ou vídeo do Drive via Render.
+  const url = o.src ? mediaUrl(o.src) : (o.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(o.driveId) : "");
+  if (!url) {
+    setStatus(o.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado." : "Este filme ainda não está disponível.");
+    E.mr.hidden = true;
+    ui();
+    return;
+  }
+
+  // Retoma de onde parou (3 s antes, para recuperar o contexto).
+  const sp = prog[o.key];
+  const startAt = resumeAt != null ? resumeAt : (sp && inProgress(o) ? Math.max(0, sp.t - 3) : 0);
+  E.mr.hidden = !startAt;
+
+  const v = document.createElement("video");
+  v.src = url;
+  v.playsInline = true;
+  v.setAttribute("playsinline", "");
+  v.setAttribute("webkit-playsinline", "");
+  v.preload = "metadata";
+  v.controls = false;
+
+  const subs = o.subtitles || [];
+  subs.forEach((sub, i) => {
+    const tr = document.createElement("track");
+    tr.kind = "subtitles"; tr.src = sub.src; tr.srclang = sub.lang; tr.label = sub.label;
+    const op = document.createElement("option");
+    op.value = String(i); op.textContent = sub.label;
+    tr.addEventListener("error", () => {
+      if (vid !== v) return;
+      op.disabled = true;
+      op.textContent = sub.label + " (indisponível)";
+      if (E.subtitle.value === String(i)) useSub(-1);
+      setStatus("Não foi possível carregar a legenda “" + sub.label + "”. O filme continua sem legenda.");
+    });
+    v.appendChild(tr);
+    E.subtitle.appendChild(op);
+  });
+  if (subs.length) E.subtitle.hidden = E.subsz.hidden = false;
+
+  v.addEventListener("play", () => { if (vid !== v) return; playing = true; ui(); showControls(); });
+  v.addEventListener("pause", () => { if (vid !== v) return; playing = false; saveNow(); ui(); keepControlsVisible(); });
+  v.addEventListener("ended", () => { if (vid !== v) return; playing = false; resetTransient(); saveNow(); ui(); keepControlsVisible(); });
+  v.addEventListener("timeupdate", () => {
+    if (vid !== v) return;
+    ui();
+    if (playing && Date.now() - lastSave > 5000) { lastSave = Date.now(); saveNow(); }
+  });
+  v.addEventListener("seeking", () => { if (vid === v && pendingSeekTime !== null) ui(); });
+  v.addEventListener("seeked", () => { if (vid !== v) return; clearTimeout(seekWatch); pendingSeekTime = null; ui(); });
+  v.addEventListener("durationchange", () => { if (vid === v) ui(); });
+  v.addEventListener("loadedmetadata", () => {
+    if (vid !== v) return;
+    setStatus("");
+    if (startAt > 0) {
+      try { v.currentTime = Math.min(startAt, Math.max(0, v.duration - 1)); } catch { /* ignora */ }
+      setStatus("Retomando de " + fmt(startAt) + "…");
+    }
+    ui();
+  });
+  v.addEventListener("error", () => {
+    if (vid !== v) return;
+    playing = false;
+    resetTransient();
+    ui();
+    keepControlsVisible();
+    mostrarErro(v);
+  });
+  v.addEventListener("waiting", () => { if (vid === v) setStatus("Carregando vídeo…"); });
+  v.addEventListener("playing", () => { if (vid === v) setStatus(""); });
+  v.addEventListener("canplay", () => { if (vid === v && v.paused) setStatus("Pronto para reproduzir."); });
+  v.addEventListener("stalled", () => {
+    if (vid === v && pendingSeekTime !== null) setStatus("Aguardando o servidor entregar o trecho solicitado...");
+  });
+  v.addEventListener("volumechange", () => { if (vid === v) ui(); });
+  v.addEventListener("ratechange", () => { if (vid === v) E.spd.textContent = (+v.playbackRate.toFixed(2)) + "×"; });
+
+  // Um toque pausa/continua; dois toques: laterais pulam 10 s, centro abre tela cheia.
+  let clickTimer = 0;
+  v.addEventListener("click", () => {
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => setPlay(v.paused), 220);
+  });
+  v.addEventListener("dblclick", e => {
+    clearTimeout(clickTimer);
+    const r = v.getBoundingClientRect(), x = (e.clientX - r.left) / r.width;
+    showControls();
+    if (x < .33) skip(-10); else if (x > .67) skip(10); else toggleFs();
+  });
+
+  E.screen.prepend(v);
+  vid = v;
+  lastSave = Date.now();
+  useSub(subs.length && subPref() ? 0 : -1);
+  ui();
+}
+
+function retryVideo() {
+  if (!cur) return;
+  const t = vid && Number.isFinite(vid.currentTime) && vid.currentTime > 0 ? Math.max(0, vid.currentTime - 3) : undefined;
+  loadVideo(cur, t);
+  setPlay(true);
+}
+
+/* --- Abrir / fechar o player --- */
+function openMovie(o) {
+  if (!o) return;
+  cur = o;
+  lastFocus = document.activeElement;
+  E.screen.setAttribute("style", sty(o));
+  E.mt.textContent = o.t;
+  fillFav();
+  loadVideo(o);
+  E.modal.classList.add("open");
+  setInert(BG, true);
+  E.close.focus();
+}
+
+function restoreFocus() {
+  const card = cur && document.querySelector('[data-open="' + CSS.escape(cur.key) + '"]');
+  for (const n of [lastFocus, card, E.menuBtn]) {
+    if (n && n.isConnected && n.getClientRects().length) { n.focus(); if (document.activeElement === n) return; }
+  }
+}
+
+function closeMovie() {
+  saveNow();
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  unloadVideo();
+  resetTransient();
+  playing = false;
+  setStatus("");
+  keepControlsVisible();
+  E.modal.classList.remove("open");
+  setInert(BG, false);
+  renderAll();            // atualiza barras de progresso e "Continuar assistindo"
+  restoreFocus();
+}
+
+/* --- Barra de progresso (mouse, toque e caneta) --- */
+function getSeekFraction(e) {
+  const rect = E.track.getBoundingClientRect();
+  if (!rect.width) return null;
+  return Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+}
+const canSeek = () => vid && Number.isFinite(vid.duration) && vid.duration > 0;
+
+function previewSeek(fraction) {
+  if (!canSeek()) return;
+  pos = fraction;
+  E.fill.style.width = (fraction * 100) + "%";
+  E.time.textContent = "-" + fmt(vid.duration * (1 - fraction));
+}
+
+function commitSeek(fraction) {
+  if (!canSeek()) return;
+  const d = vid.duration, target = Math.max(0, Math.min(d, fraction * d));
+  pendingSeekTime = target;
+  pos = target / d;
+  E.fill.style.width = (pos * 100) + "%";
+  E.time.textContent = "-" + fmt(d - target);
+  setStatus("");
+  clearTimeout(seekWatch);
+  try {
+    vid.currentTime = target;
+    if (Math.abs(vid.currentTime - target) < .05 && !vid.seeking) { pendingSeekTime = null; ui(); }
+    else {
+      // Se o servidor não responder, não deixa a barra presa esperando.
+      seekWatch = setTimeout(() => {
+        if (pendingSeekTime === null) return;
+        pendingSeekTime = null;
+        ui();
+        setStatus("O servidor demorou a responder ao avançar. Tente novamente.");
+      }, SEEK_TIMEOUT);
+    }
+  } catch (err) {
+    pendingSeekTime = null;
+    setStatus("Não foi possível avançar para esse ponto.");
+    console.error("Erro ao posicionar o vídeo:", err);
+    ui();
+  }
+}
+
+function endSeek(e, commit) {
+  if (!isSeeking || e.pointerId !== seekPointerId) return;
+  const fraction = commit ? getSeekFraction(e) : null;
+  isSeeking = false;
+  seekPointerId = null;
+  if (fraction !== null) commitSeek(fraction); else if (pendingSeekTime === null) ui();
+  showControls();
+  try { if (E.track.hasPointerCapture(e.pointerId)) E.track.releasePointerCapture(e.pointerId); } catch { /* ignora */ }
+}
+
+E.track.addEventListener("pointerdown", e => {
+  if (!canSeek() || (e.pointerType === "mouse" && e.button !== 0)) return;
+  e.preventDefault();
+  isSeeking = true;
+  seekPointerId = e.pointerId;
+  showControls();
+  const f = getSeekFraction(e);
+  if (f !== null) previewSeek(f);
+  try { E.track.setPointerCapture(e.pointerId); } catch { /* ignora */ }
+});
+E.track.addEventListener("pointermove", e => {
+  if (!isSeeking || e.pointerId !== seekPointerId) return;
+  const f = getSeekFraction(e);
+  if (f !== null) previewSeek(f);
+});
+E.track.addEventListener("pointerup", e => endSeek(e, true));
+E.track.addEventListener("pointercancel", e => endSeek(e, false));
+E.track.addEventListener("lostpointercapture", e => endSeek(e, false));   // perdeu o ponteiro: nunca fica "arrastando"
+
+/* --- Demais controles --- */
+E.screen.addEventListener("pointermove", showControls);
+E.screen.addEventListener("pointerdown", showControls);
+E.screen.addEventListener("focusin", showControls);
+E.screen.addEventListener("pointerleave", () => {
+  if (vid && !vid.paused && !vid.ended && !isSeeking) {
+    clearTimeout(controlsTimer);
+    controlsTimer = setTimeout(() => E.screen.classList.add("controls-hidden"), CONTROLS_DELAY);
+  }
+});
+
+E.big.onclick = E.pp.onclick = () => { showControls(); setPlay(!playing); };
+E.subtitle.addEventListener("change", () => {
+  if (!vid) return;
+  const sel = Number(E.subtitle.value);
+  store.set(K.sub, sel >= 0 ? 1 : 0);
+  useSub(sel);
+});
+E.subsz.onclick = () => {
+  showControls();
+  szi = (szi + 1) % SUBSZ.length;
+  applySz();
+  store.set(K.subsz, szi);
+  setStatus("Tamanho da legenda: " + SUBSZ[szi][0]);
+  setTimeout(() => { if (E.status.textContent.startsWith("Tamanho")) setStatus(""); }, 1500);
+};
+E.spd.onclick = () => {
+  showControls();
+  if (!vid) return;
+  const i = SPEEDS.indexOf(vid.playbackRate);
+  vid.playbackRate = SPEEDS[(i + 1) % SPEEDS.length];
+};
+E.rew.onclick = () => { showControls(); skip(-10); };
+E.fwd.onclick = () => { showControls(); skip(10); };
+E.mf.onclick = () => cur && toggleFav(cur.key);
+E.mr.onclick = () => {
+  if (!vid || !cur) return;
+  delete prog[cur.key];
+  saveProg();
+  vid.currentTime = 0;
+  E.mr.hidden = true;
+  setPlay(true);
+};
+E.mute.onclick = () => { showControls(); if (vid) vid.muted = !vid.muted; };
+E.fs.onclick = () => { showControls(); toggleFs(); };
+E.close.onclick = closeMovie;
+
+/* =========================================================
+   9. TECLADO (Esc, Tab preso nos painéis, atalhos do player)
+   Espaço/K pausa · ←/→ ±10 s · ↑/↓ volume · M som · F tela cheia
+   ========================================================= */
+document.addEventListener("keydown", e => {
+  const modalOpen = E.modal.classList.contains("open");
+  const drawerOpen = E.drawer.classList.contains("open");
+
+  if (e.key === "Escape") {
+    if (!E.profileMenu.hidden) closeProfile(true);
+    else if (modalOpen) closeMovie();
+    else if (drawerOpen) closeDrawer();
+    else closePops(true);
+    return;
+  }
+  if (drawerOpen) { trapTab(e, E.drawer); return; }
+  if (!modalOpen) return;
+
+  trapTab(e, E.modal);
+  if (!vid || e.ctrlKey || e.metaKey || e.altKey) return;
+  const tag = e.target.tagName;
+  if (tag === "SELECT" || tag === "INPUT") return;
+
+  const k = e.key.toLowerCase();
+  if (k === "k" || (k === " " && tag !== "BUTTON")) {
+    e.preventDefault(); showControls(); setPlay(vid.paused);
+  } else if (k === "arrowleft" || k === "arrowright") {
+    e.preventDefault(); showControls(); skip(k === "arrowright" ? 10 : -10);
+  } else if (k === "arrowup" || k === "arrowdown") {
+    e.preventDefault(); showControls();
+    vid.volume = Math.max(0, Math.min(1, vid.volume + (k === "arrowup" ? .1 : -.1)));
+  } else if (k === "m") {
+    showControls(); vid.muted = !vid.muted;
+  } else if (k === "f") {
+    showControls(); toggleFs();
+  }
+});
+
+/* =========================================================
+   10. PLANILHA DO GOOGLE (opcional)
+   ========================================================= */
+function parseCSV(t) {
+  t = t.replace(/^\uFEFF/, "");
+  const rows = []; let r = [], c = "", inQ = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inQ) {
+      if (ch === '"') { if (t[i + 1] === '"') { c += '"'; i++; } else inQ = false; }
+      else c += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") { r.push(c); c = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; r.push(c); rows.push(r); r = []; c = ""; }
+    else c += ch;
+  }
+  if (c !== "" || r.length) { r.push(c); rows.push(r); }
+  return rows;
+}
+
+function filmesDaPlanilha(csv) {
+  const rows = parseCSV(csv).filter(r => r.some(c => c.trim()));
+  if (rows.length < 2) return [];
+  const head = rows[0].map(c => norm(c.trim()));
+  const col = (r, n) => { const i = head.indexOf(n); return i < 0 ? "" : (r[i] || "").trim(); };
+  return rows.slice(1).map(r => {
+    const t = col(r, "titulo");
+    if (!t) return null;
+    const cor = col(r, "cor");
+    return normalizar({
+      id: col(r, "id"), t,
+      g: col(r, "genero") || "Drama", y: col(r, "ano"), m: col(r, "minutos"), a: col(r, "idade"),
+      h: cor !== "" && !isNaN(+cor) ? +cor : hueOf(t),
+      x: (20 + hueOf(t + "x") % 60) + "%",
+      p: col(r, "sinopse"),
+      capa: col(r, "capa"), legenda: col(r, "legenda"), drive: col(r, "drive"), video: col(r, "video")
+    });
+  }).filter(Boolean);
+}
+
+async function carregarPlanilha() {
+  let u;
+  try { u = new URL(CONFIG.planilha); } catch { u = null; }
+  if (!u || u.protocol !== "https:" || u.hostname !== "docs.google.com") {
+    console.warn("PLANILHA ignorada: use um link https://docs.google.com/... publicado na web.");
+    return;
+  }
+  // Aceita o link "pubhtml" e converte para CSV automaticamente.
+  u.pathname = u.pathname.replace(/\/pubhtml$/, "/pub");
+  if (u.searchParams.get("output") !== "csv") u.searchParams.set("output", "csv");
+
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const r = await fetch(u.href, { cache: "no-store", signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const lista = filmesDaPlanilha(await r.text());
+    if (!lista.length) {
+      console.warn("A planilha foi lida, mas não tem filmes válidos (confira a linha de títulos). Usando a lista padrão.");
+      return;
+    }
+    setCatalogo(lista);
+    console.info("Planilha carregada:", lista.length, "filmes.");
+  } catch (err) {
+    console.warn("Não foi possível ler a planilha; usando a lista padrão.", err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* =========================================================
+   11. INICIALIZAÇÃO
+   ========================================================= */
+applySz();
+setIcon(E.fs, "fs", IC.fs);
+setCatalogo((Array.isArray(window.CATALOGO) ? window.CATALOGO : []).map(normalizar).filter(Boolean));
+if (!CONFIG.planilha) migrarLegado();
+renderAll();
+startHero();
+if (CONFIG.planilha) carregarPlanilha().finally(() => { migrarLegado(); renderAll(); });
+
+})();
