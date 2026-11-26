@@ -15,7 +15,7 @@ const CONFIG = {
   token: "CN-8fK2mQ9xT7vP4zR6wB3nL5",
   // Link da planilha publicada (https://docs.google.com/...). "" = usa só catalogo.js.
   // Colunas: id, titulo, genero, ano, minutos, idade, cor, sinopse, capa, legenda, drive, video
-  planilha: ""
+  planilha: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZSLOiscliA71tkQolLK0tbhHi5HAM7sIikyf9-zmk2DS9xa7Q1IyNJ2W34xXDirwGylclVWgRAzuJ/pub?gid=1090910520&single=true&output=csv"
 };
 
 const CONTROLS_DELAY = 3000;   // ms até esconder os controles do player
