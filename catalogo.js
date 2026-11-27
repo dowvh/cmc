@@ -44,8 +44,8 @@ window.CATALOGO = (() => {
       "Um pistoleiro solitário tenta deixar seu passado violento para trás ao trabalhar em uma fazenda, mas acaba defendendo uma família de colonos contra um poderoso criador de gado.",
       { video: "shane-web.mp4" }),
 
-    f("germany-year-zero", "Germany, Year Zero", "Drama", 1948, 78, "12",
-      "Em uma Berlim devastada no pós-guerra, um menino de doze anos luta para ajudar sua família a sobreviver, mas acaba influenciado por um antigo professor nazista."),
+    f("the-ladies-man", "The Ladies Man", "Comédia", 1961, 95, "10",
+      "Rejeitado por seu grande amor, Herbert decide recomeçar a sua vida, de preferência longe das mulheres. Ele aceita um emprego de zelador em uma pensão sem saber que o estabelecimento só hospeda jovens solteiras."),
 
     f("street-of-shame", "Street of Shame", "Drama", 1956, 85, "14",
       "Em um bordel de Tóquio na década de 1950, cinco mulheres de diferentes origens lutam para pagar suas dívidas e sustentar suas famílias enquanto o parlamento debate a proibição da prostituição."),
