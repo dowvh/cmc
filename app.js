@@ -15,6 +15,7 @@ const CONFIG = {
   token: "CN-8fK2mQ9xT7vP4zR6wB3nL5",
   // Link da planilha publicada (https://docs.google.com/...). "" = usa só catalogo.js.
   // Colunas: id, titulo, genero, ano, minutos, idade, cor, sinopse, capa, legenda, drive, video
+  // Colunas opcionais para filme em duas partes: video2, drive2, legenda2
   planilha: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZSLOiscliA71tkQolLK0tbhHi5HAM7sIikyf9-zmk2DS9xa7Q1IyNJ2W34xXDirwGylclVWgRAzuJ/pub?gid=1090910520&single=true&output=csv"
 };
 
@@ -110,11 +111,12 @@ const store = {
 
 const progValido = v => v && typeof v === "object" && Number.isFinite(v.t) && Number.isFinite(v.d) && v.d > 0 && v.t >= 0;
 
+// p = parte salva (0 ou 1). Filmes sem partes ficam sempre com p = 0.
 function limparProg(obj) {
   const out = Object.create(null);
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
     for (const [k, v] of Object.entries(obj)) {
-      if (progValido(v)) out[k] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0 };
+      if (progValido(v)) out[k] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0, p: Number.isInteger(v.p) && v.p >= 0 && v.p < 2 ? v.p : 0 };
     }
   }
   return out;
@@ -129,7 +131,17 @@ const saveFavs = () => store.set(K.favs, [...favs]);
 const saveLikes = () => store.set(K.likes, [...likes]);
 const saveProg = () => store.set(K.prog, prog);
 
-const pct = o => { const p = prog[o.key]; return p && p.d ? Math.min(1, p.t / p.d) : 0; };
+// Parte salva (0 ou 1). Filmes sem partes sempre devolvem 0.
+const partOf = o => { const p = prog[o.key]; return p && o.parts.length ? Math.min(p.p | 0, o.parts.length - 1) : 0; };
+// Fonte de vídeo/legenda: a parte n (se o filme tem partes) ou o próprio filme.
+const fonte = (o, n) => o.parts.length ? (o.parts[n] || o.parts[0]) : o;
+// Progresso total: com partes, cada uma vale uma fração igual.
+const pct = o => {
+  const p = prog[o.key];
+  if (!p || !p.d) return 0;
+  const f = Math.min(1, p.t / p.d), n = o.parts.length;
+  return n > 1 ? Math.min(1, (partOf(o) + f) / n) : f;
+};
 const inProgress = o => { const p = pct(o); return p > .02 && p < .95; };
 const watched = o => pct(o) >= .95;
 
@@ -141,6 +153,21 @@ let szi = (() => { const r = store.get(K.subsz, 1); return Number.isInteger(r) &
    ========================================================= */
 let M = [];
 let byKey = new Map();
+const MAXPARTES = 2;
+
+// Uma parte. Na planilha as chaves sempre existem (podem estar vazias).
+// No catalogo.js, se "video"/"legenda" nem existir, usa o nome padrão <id>-p1.mp4 etc.
+function normalizarParte(p, base, n) {
+  p = p && typeof p === "object" ? p : {};
+  const tem = k => Object.prototype.hasOwnProperty.call(p, k);
+  const drive = extrairDriveId(p.drive);
+  const video = tem("video") ? p.video : (drive ? "" : base + "-p" + (n + 1) + ".mp4");
+  const legenda = tem("legenda") ? p.legenda : base + "-p" + (n + 1) + "-pt.vtt";
+  const subtitles = [];
+  const leg = relUrl(CONFIG.legendas, legenda);
+  if (leg) subtitles.push({ src: leg, lang: "pt-BR", label: "Português" });
+  return { src: videoUrl(video), driveId: DRIVE_ID.test(drive) ? drive : "", subtitles };
+}
 
 // Converte qualquer item (catalogo.js ou planilha) no formato interno, validando todos os links.
 function normalizar(r) {
@@ -163,11 +190,20 @@ function normalizar(r) {
     img: SCHEME.test(capa) ? httpsUrl(capa) : relUrl(CONFIG.capas, capa),
     src: videoUrl(r.video),
     driveId: DRIVE_ID.test(drive) ? drive : "",
-    subtitles: []
+    subtitles: [],
+    parts: []
   };
   // Legendas: só caminhos relativos (arquivos de outro site exigiriam CORS e quebrariam no <track>).
   const leg = relUrl(CONFIG.legendas, r.legenda);
   if (leg) o.subtitles.push({ src: leg, lang: "pt-BR", label: "Português" });
+
+  // Partes (opcional): só existe se o filme pedir explicitamente (planilha: video2/drive2).
+  const base = slug(o.id) || slug(t) || "filme";
+  const pr = r.partes === 2 || r.partes === true ? [{}, {}] : r.partes;
+  if (Array.isArray(pr) && pr.length >= 2) {
+    o.parts = pr.slice(0, MAXPARTES).map((p, n) => normalizarParte(p, base, n));
+    o.subtitles = o.parts.flatMap(p => p.subtitles);   // só para exibir em "Detalhes"
+  }
   return o;
 }
 
@@ -198,7 +234,7 @@ function migrarLegado() {
     for (const [titulo, v] of Object.entries(velho)) {
       const o = M.find(x => x.t === titulo);
       if (!o) { sobrou = true; continue; }
-      if (!prog[o.key] && progValido(v)) prog[o.key] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0 };
+      if (!prog[o.key] && progValido(v)) prog[o.key] = { t: v.t, d: v.d, u: Number.isFinite(v.u) ? v.u : 0, p: 0 };
       delete velho[titulo];
     }
     saveProg();
@@ -371,14 +407,26 @@ function renderDetail() {
   // O HTML é refeito a cada mudança; guarda o foco para o teclado não se perder.
   const keep = E.detail.contains(document.activeElement) ? document.activeElement.id : "";
   const k = esc(o.key), f = favs.has(o.key), liked = likes.has(o.key), ip = inProgress(o);
-  const acao = ip ? "Continuar" : "Assistir agora";
+  const np = o.parts.length, pa = partOf(o);
+  const acao = ip ? (np ? "Continuar Parte " + (pa + 1) : "Continuar") : "Assistir agora";
   const chips = [o.g, decadeOf(o)].filter(Boolean).map(c => "<span>" + esc(c) + "</span>").join("");
   const linha = (l, v) => v ? "<div><dt>" + l + "</dt><dd>" + esc(v) + "</dd></div>" : "";
   const rel = related(o);
+  const legs = [...new Set(o.subtitles.map(s => s.label))];
+
+  // Botões "Parte 1 / Parte 2" (só para filmes configurados com partes na planilha).
+  const partesHTML = np ? '<div class="dparts" role="group" aria-label="Escolher a parte do filme">' +
+    o.parts.map((_, n) => {
+      const cont = ip && pa === n;
+      return '<button type="button" id="dpart-' + n + '" data-play="' + k + '" data-part="' + n + '" aria-label="' +
+        (cont ? "Continuar" : "Assistir") + " Parte " + (n + 1) + ": " + esc(o.t) + '">' + IC.playFill(16) +
+        "<span>Parte " + (n + 1) + "</span>" + (cont ? "<small>Continuar</small>" : "") + "</button>";
+    }).join("") + "</div>" : "";
 
   const painel = dtab === "info"
     ? '<dl class="dinfo">' + linha("Título", o.t) + linha("Gênero", o.g) + linha("Ano", o.y) + linha("Duração", dur(o.m)) +
-      linha("Classificação", idade(o.a)) + linha("Legendas", o.subtitles.length ? o.subtitles.map(s => s.label).join(", ") : "Não disponíveis") +
+      linha("Partes", np ? np + " (Parte 1 e Parte 2)" : "") +
+      linha("Classificação", idade(o.a)) + linha("Legendas", legs.length ? legs.join(", ") : "Não disponíveis") +
       linha("Sinopse", o.p) + "</dl>"
     : rel.length ? '<div class="gridv">' + rel.map(cardHTML).join("") + "</div>"
       : '<p class="empty">Não há outros filmes para sugerir.</p>';
@@ -394,6 +442,7 @@ function renderDetail() {
         '<div class="dmeta"><span class="age" data-a="' + esc(o.a) + '" title="Classificação: ' + esc(idade(o.a)) + '">' + esc(o.a) + "</span>" +
           "<span>" + dur(o.m) + "</span>" + (o.y ? "<span>" + esc(o.y) + "</span>" : "") + "</div>" +
         '<button class="watch dwatch" id="dplay" type="button" data-play="' + k + '" aria-label="' + acao + ": " + esc(o.t) + '">' + IC.playFill(22) + acao + "</button>" +
+        partesHTML +
         '<div class="dmini">' +
           '<button type="button" id="dfav" data-fav="' + k + '" aria-pressed="' + f + '">' + (f ? IC.check : IC.plus) + "<span>Minha lista</span></button>" +
           '<button type="button" id="drate" data-rate="' + k + '" aria-pressed="' + liked + '">' + IC.thumb + "<span>" + (liked ? "Gostei" : "Avaliar") + "</span></button>" +
@@ -617,7 +666,8 @@ document.addEventListener("click", e => {
     r.scrollBy({ left: ar.dataset.arr * r.clientWidth * .85, behavior: "smooth" });
   }
   else if (dt) { hi = +dt.dataset.dot; renderHero(); startHero(); }
-  else if (pl) openMovie(byKey.get(pl.dataset.play));       // botão "Assistir agora" da página de detalhes
+  // Botão "Assistir agora" (sem parte) ou "Parte N" da página de detalhes.
+  else if (pl) openMovie(byKey.get(pl.dataset.play), pl.dataset.part === undefined ? undefined : +pl.dataset.part);
   else if (rt) toggleLike(rt.dataset.rate);
   else if (dtb) { dtab = dtb.dataset.dtab; renderDetail(); }
   else if (db) closeDetail();
@@ -672,7 +722,7 @@ addEventListener("scroll", () => E.top.classList.toggle("solid", scrollY > 40), 
 /* =========================================================
    8. PLAYER
    ========================================================= */
-let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null;
+let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null, curPart = 0;
 let controlsTimer = 0, seekWatch = 0, isSeeking = false, seekPointerId = null, pendingSeekTime = null;
 
 /* --- Controles visíveis / escondidos --- */
@@ -731,11 +781,13 @@ function mostrarErro(v) {
   console.warn("Erro no vídeo:", cur && cur.t, "código", code, link);
 }
 
-/* --- Progresso salvo --- */
+/* --- Progresso salvo (guarda também a parte atual) --- */
 function saveNow() {
   if (!vid || !cur || !Number.isFinite(vid.duration) || vid.duration <= 0) return;
-  if (vid.currentTime < 5 && !prog[cur.key]) return;
-  prog[cur.key] = { t: vid.currentTime, d: vid.duration, u: Date.now() };
+  const prev = prog[cur.key];
+  // Nos primeiros 5 s não sobrescreve o progresso salvo de outra parte (nem cria progresso novo).
+  if (vid.currentTime < 5 && (!prev || (prev.p | 0) !== curPart)) return;
+  prog[cur.key] = { t: vid.currentTime, d: vid.duration, u: Date.now(), p: curPart };
   saveProg();
 }
 addEventListener("pagehide", saveNow);
@@ -842,29 +894,45 @@ function unloadVideo() {
   old.remove();
 }
 
+// Título "Filme · Parte N" e botões Parte 1/2 do player (só aparecem em filmes com partes).
+function syncParts() {
+  const n = cur ? cur.parts.length : 0;
+  E.mt.textContent = cur ? cur.t + (n ? " · Parte " + (curPart + 1) : "") : "";
+  E.pseg.hidden = !n;
+  E.pseg.querySelectorAll("[data-pt]").forEach(b => {
+    const i = +b.dataset.pt;
+    b.hidden = i >= n;
+    b.setAttribute("aria-pressed", String(i === curPart));
+  });
+}
+
 function loadVideo(o, resumeAt) {
   unloadVideo();
   resetTransient();
   playing = false;
   pos = 0;
+  syncParts();
+  E.mr.textContent = o.parts.length ? "Recomeçar a parte" : "Recomeçar do início";
   keepControlsVisible();
   setStatus("");
   E.spd.textContent = "1×";
   E.subtitle.hidden = E.subsz.hidden = true;
   E.subtitle.innerHTML = '<option value="-1">Legendas: desligadas</option>';
 
-  // Arquivo direto (com token se for do seu PC) ou vídeo do Drive via Render.
-  const url = o.src ? mediaUrl(o.src) : (o.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(o.driveId) : "");
+  // Arquivo direto (com token se for do seu PC) ou vídeo do Drive via Render. Com partes, usa a parte atual.
+  const fo = fonte(o, curPart);
+  const url = fo.src ? mediaUrl(fo.src) : (fo.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(fo.driveId) : "");
   if (!url) {
-    setStatus(o.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado." : "Este filme ainda não está disponível.");
+    setStatus(fo.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado."
+      : o.parts.length ? "Esta parte ainda não está disponível." : "Este filme ainda não está disponível.");
     E.mr.hidden = true;
     ui();
     return;
   }
 
-  // Retoma de onde parou (3 s antes, para recuperar o contexto).
+  // Retoma de onde parou (3 s antes), mas só se a parte salva for a que está abrindo.
   const sp = prog[o.key];
-  const startAt = resumeAt != null ? resumeAt : (sp && inProgress(o) ? Math.max(0, sp.t - 3) : 0);
+  const startAt = resumeAt != null ? resumeAt : (sp && inProgress(o) && partOf(o) === curPart ? Math.max(0, sp.t - 3) : 0);
   E.mr.hidden = !startAt;
 
   const v = document.createElement("video");
@@ -875,7 +943,7 @@ function loadVideo(o, resumeAt) {
   v.preload = "metadata";
   v.controls = false;
 
-  const subs = o.subtitles || [];
+  const subs = fo.subtitles || [];
   subs.forEach((sub, i) => {
     const tr = document.createElement("track");
     tr.kind = "subtitles"; tr.src = sub.src; tr.srclang = sub.lang; tr.label = sub.label;
@@ -895,7 +963,12 @@ function loadVideo(o, resumeAt) {
 
   v.addEventListener("play", () => { if (vid !== v) return; playing = true; ui(); showControls(); });
   v.addEventListener("pause", () => { if (vid !== v) return; playing = false; saveNow(); ui(); keepControlsVisible(); });
-  v.addEventListener("ended", () => { if (vid !== v) return; playing = false; resetTransient(); saveNow(); ui(); keepControlsVisible(); });
+  v.addEventListener("ended", () => {
+    if (vid !== v) return;
+    playing = false; resetTransient(); saveNow(); ui(); keepControlsVisible();
+    // Fim da Parte 1: segue sozinho para a Parte 2.
+    if (cur.parts.length && curPart < cur.parts.length - 1) avancarParte();
+  });
   v.addEventListener("timeupdate", () => {
     if (vid !== v) return;
     ui();
@@ -909,7 +982,7 @@ function loadVideo(o, resumeAt) {
     setStatus("");
     if (startAt > 0) {
       try { v.currentTime = Math.min(startAt, Math.max(0, v.duration - 1)); } catch { /* ignora */ }
-      setStatus("Retomando de " + fmt(startAt) + "…");
+      setStatus(o.parts.length ? "Retomando a Parte " + (curPart + 1) + " em " + fmt(startAt) + "…" : "Retomando de " + fmt(startAt) + "…");
     }
     ui();
   });
@@ -950,6 +1023,24 @@ function loadVideo(o, resumeAt) {
   ui();
 }
 
+/* --- Trocar de parte dentro do player --- */
+function trocarParte(n, auto) {
+  if (!cur || !cur.parts.length || n === curPart || n < 0 || n >= cur.parts.length) return;
+  if (!auto) saveNow();          // guarda a parte atual antes de sair dela
+  curPart = n;
+  loadVideo(cur);                // retoma se for a parte salva; senão começa do zero
+  setPlay(true);
+}
+
+// Fim da Parte 1: deixa o progresso apontando para o início da Parte 2 e segue sozinho.
+function avancarParte() {
+  const d = vid && Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 1;
+  prog[cur.key] = { t: 0, d, u: Date.now(), p: curPart + 1 };
+  saveProg();
+  trocarParte(curPart + 1, true);
+  toast("Continuando na Parte " + (curPart + 1) + ".");
+}
+
 function retryVideo() {
   if (!cur) return;
   const t = vid && Number.isFinite(vid.currentTime) && vid.currentTime > 0 ? Math.max(0, vid.currentTime - 3) : undefined;
@@ -958,14 +1049,17 @@ function retryVideo() {
 }
 
 /* --- Abrir / fechar o player --- */
-function openMovie(o) {
+function openMovie(o, part) {
   if (!o) return;
   cur = o;
+  // Parte pedida; senão, a parte salva (se em andamento); senão, a Parte 1.
+  curPart = o.parts.length
+    ? (Number.isInteger(part) && part >= 0 && part < o.parts.length ? part : (inProgress(o) ? partOf(o) : 0))
+    : 0;
   lastFocus = document.activeElement;
   E.screen.setAttribute("style", sty(o));
-  E.mt.textContent = o.t;
   fillFav();
-  loadVideo(o);
+  loadVideo(o);               // também atualiza título e botões de parte
   E.modal.classList.add("open");
   setInert(BG, true);
   E.close.focus();
@@ -1109,6 +1203,12 @@ E.mr.onclick = () => {
   E.mr.hidden = true;
   setPlay(true);
 };
+E.pseg.addEventListener("click", e => {
+  const b = e.target.closest("[data-pt]");
+  if (!b) return;
+  showControls();
+  trocarParte(+b.dataset.pt);
+});
 E.mute.onclick = () => { showControls(); if (vid) vid.muted = !vid.muted; };
 E.fs.onclick = () => { showControls(); toggleFs(); };
 E.close.onclick = closeMovie;
@@ -1181,13 +1281,21 @@ function filmesDaPlanilha(csv) {
     const t = col(r, "titulo");
     if (!t) return null;
     const cor = col(r, "cor");
+    // Filme em duas partes: só se video2 ou drive2 estiver preenchido.
+    // A Parte 1 usa as colunas video/drive/legenda; a Parte 2 usa video2/drive2/legenda2.
+    const v2 = col(r, "video2"), d2 = col(r, "drive2");
+    const partes = (v2 || d2) ? [
+      { video: col(r, "video"), drive: col(r, "drive"), legenda: col(r, "legenda") },
+      { video: v2, drive: d2, legenda: col(r, "legenda2") }
+    ] : undefined;
     return normalizar({
       id: col(r, "id"), t,
       g: col(r, "genero") || "Drama", y: col(r, "ano"), m: col(r, "minutos"), a: col(r, "idade"),
       h: cor !== "" && !isNaN(+cor) ? +cor : hueOf(t),
       x: (20 + hueOf(t + "x") % 60) + "%",
       p: col(r, "sinopse"),
-      capa: col(r, "capa"), legenda: col(r, "legenda"), drive: col(r, "drive"), video: col(r, "video")
+      capa: col(r, "capa"), legenda: col(r, "legenda"), drive: col(r, "drive"), video: col(r, "video"),
+      partes
     });
   }).filter(Boolean);
 }
