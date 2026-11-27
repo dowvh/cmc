@@ -172,3 +172,53 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 .bl .btn{font-size:.82rem;padding:6px}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+
+/* ---------- Página de detalhes do filme ---------- */
+#detail{min-height:60vh;padding-bottom:34px;background:var(--bg)}
+.dhero{min-height:min(78vh,720px);padding:112px var(--pad) 58px}
+.dhero::before{opacity:.7;filter:blur(30px) saturate(1.15)}
+.dhero::after{background:linear-gradient(90deg,#000e 0,#0009 42%,#0002 100%),linear-gradient(0deg,var(--bg) 0,transparent 58%)}
+.dhero .hero-art{width:min(68%,1000px);opacity:.88;background-position:center 25%;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 28%);mask-image:linear-gradient(90deg,transparent 0,#000 28%)}
+.dhero .hero-body{position:relative;z-index:1;max-width:min(560px,62vw)}
+.dhero h1{font-size:clamp(2.5rem,6vw,5.2rem);text-transform:none;line-height:.98;text-shadow:0 2px 20px #0009}
+.dback{position:absolute;top:calc(88px + env(safe-area-inset-top,0px));left:var(--pad);z-index:5;display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1px solid #ffffff55;border-radius:4px;background:#08090bbd;color:#fff;font-weight:600}
+.dback:hover{background:#ffffff26}
+.dmeta{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin:18px 0 22px;color:#eee;font-size:.96rem}
+.dmeta>span{display:inline-flex;align-items:center}
+.dmeta .age{min-width:30px;justify-content:center;padding:2px 7px;border:1px solid #ffffffa6;border-radius:3px;font-weight:700;font-size:.82rem}
+.dwatch{margin-bottom:14px;min-width:210px}
+.dmini{display:flex;flex-wrap:wrap;gap:12px;margin:2px 0 16px}
+.dmini button{display:flex;align-items:center;gap:8px;min-height:42px;padding:7px 12px;border:1px solid #ffffff50;border-radius:4px;background:#292a30c9;color:#fff;font-weight:600}
+.dmini button:hover,.dmini button[aria-pressed=true]{background:#fff;color:#111}
+.dmini button svg{width:22px;height:22px}
+.dmini button[aria-pressed=true] .thumb path{fill:currentColor}
+.dhero .syn{max-width:540px;margin:10px 0 16px;color:#f1f1f3;font-size:1rem;line-height:1.55;display:block;-webkit-line-clamp:unset;overflow:visible}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips span{padding:5px 10px;border:1px solid #ffffff55;border-radius:20px;background:#ffffff14;color:#eee;font-size:.82rem}
+.dtabs{display:flex;gap:0;margin:0 var(--pad);border-bottom:1px solid var(--line)}
+.dtab{position:relative;padding:15px 12px 13px;border:0;border-bottom:2px solid transparent;background:none;color:#c7c8ce;font-weight:600}
+.dtab[aria-selected=true]{border-bottom-color:#fff;color:#fff}
+.dpanel{padding:24px 0 12px}
+.dpanel .gridv{padding-left:var(--pad);padding-right:var(--pad)}
+.dinfo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 34px;margin:0 var(--pad);max-width:1000px}
+.dinfo>div{display:grid;grid-template-columns:minmax(120px,.45fr) 1fr;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}
+.dinfo dt{color:var(--muted);font-weight:600}
+.dinfo dd{margin:0;color:#f1f1f3}
+.dinfo>div:last-child{grid-column:1/-1;grid-template-columns:minmax(120px,.2fr) 1fr}
+@media(max-width:700px){
+ .dhero{min-height:86vh;padding:220px 20px 42px;align-items:flex-end}
+ .dhero .hero-art{top:0;left:0;width:100%;height:66%;opacity:.72;background-position:center 22%;-webkit-mask-image:linear-gradient(0deg,transparent 0,#000 38%);mask-image:linear-gradient(0deg,transparent 0,#000 38%)}
+ .dhero::after{background:linear-gradient(0deg,var(--bg) 0,#0009 50%,#0002 100%)}
+ .dhero .hero-body{max-width:100%}
+ .dhero h1{font-size:clamp(2.25rem,11vw,3.5rem)}
+ .dback{top:calc(88px + env(safe-area-inset-top,0px));left:16px}
+ .dmeta{margin:13px 0 17px}
+ .dwatch{width:100%;justify-content:center}
+ .dtabs{margin:0 16px;overflow-x:auto}
+ .dtab{white-space:nowrap;padding:13px 10px;font-size:.9rem}
+ .dinfo{grid-template-columns:1fr}
+ .dinfo>div:last-child{grid-column:auto}
+ .dinfo>div{grid-template-columns:115px 1fr}
+ .dpanel{padding-top:18px}
+}
