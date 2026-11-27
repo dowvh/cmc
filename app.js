@@ -100,7 +100,7 @@ const extrairDriveId = u => {
 /* =========================================================
    3. ARMAZENAMENTO LOCAL (progresso, lista, preferências)
    ========================================================= */
-const K = { prog: "cn-prog-v2", favs: "cn-favs-v2", sub: "cn-sub", subsz: "cn-subsz", legProg: "cn-prog", legFavs: "cn-favs" };
+const K = { prog: "cn-prog-v2", favs: "cn-favs-v2", likes: "cn-likes-v2", sub: "cn-sub", subsz: "cn-subsz", legProg: "cn-prog", legFavs: "cn-favs" };
 
 const store = {
   get(k, fb) { try { const v = localStorage.getItem(k); return v === null ? fb : JSON.parse(v); } catch { return fb; } },
@@ -123,8 +123,10 @@ const limparFavs = arr => new Set(Array.isArray(arr) ? arr.filter(x => typeof x 
 
 // Chaves = id estável do filme (ver atribuirChaves), nunca o índice nem o título.
 let favs = limparFavs(store.get(K.favs, []));
+let likes = limparFavs(store.get(K.likes, []));
 let prog = limparProg(store.get(K.prog, {}));
 const saveFavs = () => store.set(K.favs, [...favs]);
+const saveLikes = () => store.set(K.likes, [...likes]);
 const saveProg = () => store.set(K.prog, prog);
 
 const pct = o => { const p = prog[o.key]; return p && p.d ? Math.min(1, p.t / p.d) : 0; };
@@ -230,6 +232,8 @@ const IC = {
   heart: '<svg class="heart" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.4-9.4A5.2 5.2 0 0 1 12 6.4a5.2 5.2 0 0 1 9.4 4.7C19.5 15.9 12 20.5 12 20.5z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   check: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  thumb: '<svg class="thumb" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.3a2 2 0 0 0 2-1.7l1.4-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>',
+  back: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>',
   dots: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>'
 };
 function setIcon(el, id, html) {
@@ -237,9 +241,10 @@ function setIcon(el, id, html) {
 }
 
 /* =========================================================
-   6. RENDERIZAÇÃO (destaque, faixas, grade, menu lateral)
+   6. RENDERIZAÇÃO (destaque, faixas, grade, detalhes, menu lateral)
    ========================================================= */
 let filter = "Todos", q = "", sortBy = "", hi = 0, heroTimer = null;
+let detailKey = "", dtab = "like", homeScroll = 0;   // página de detalhes do filme
 const SORTS = {
   az: (a, b) => a.t.localeCompare(b.t),
   new: (a, b) => (+b.y || 0) - (+a.y || 0),
@@ -256,7 +261,7 @@ const meta = o => (o.y ? "<span>" + esc(o.y) + "</span>" : "") + "<span>" + dur(
 
 function renderHero() {
   const L = M.slice(0, 6);
-  E.hero.hidden = !!(filter !== "Todos" || q) || !L.length;
+  E.hero.hidden = !!(filter !== "Todos" || q) || !L.length || !!detailKey;
   if (E.hero.hidden) return;
   const n = hi % L.length, o = L[n], f = favs.has(o.key), k = esc(o.key);
   E.hero.style.cssText = sty(o);
@@ -303,6 +308,8 @@ function visible() {
 }
 
 function renderRows() {
+  E.rows.hidden = !!detailKey;
+  if (detailKey) return;
   const R = E.rows, sc = {};
   R.querySelectorAll(".rail").forEach(r => { sc[r.dataset.k] = r.scrollLeft; });
   const grid = filter !== "Todos" || q;
@@ -341,6 +348,95 @@ function renderRows() {
   R.querySelectorAll(".rail").forEach(r => { if (sc[r.dataset.k]) r.scrollLeft = sc[r.dataset.k]; });
 }
 
+/* --- Página de detalhes (aparece ao clicar num filme, antes do player) --- */
+
+// Filmes parecidos: mesmo gênero primeiro, depois mesma década, depois o ano mais próximo.
+function related(o, n = 12) {
+  const y = Number(o.y) || 0;
+  return M.filter(x => x.key !== o.key)
+    .map(x => {
+      const xy = Number(x.y) || 0;
+      const score = (x.g && x.g === o.g ? 2 : 0) + (y && xy && Math.floor(xy / 10) === Math.floor(y / 10) ? 1 : 0);
+      return { x, score, d: y && xy ? Math.abs(xy - y) : 999 };
+    })
+    .sort((a, b) => b.score - a.score || a.d - b.d)
+    .slice(0, n)
+    .map(r => r.x);
+}
+
+function renderDetail() {
+  const o = detailKey ? byKey.get(detailKey) : null;
+  if (!o) { detailKey = ""; E.detail.hidden = true; E.detail.innerHTML = ""; return; }
+
+  // O HTML é refeito a cada mudança; guarda o foco para o teclado não se perder.
+  const keep = E.detail.contains(document.activeElement) ? document.activeElement.id : "";
+  const k = esc(o.key), f = favs.has(o.key), liked = likes.has(o.key), ip = inProgress(o);
+  const acao = ip ? "Continuar" : "Assistir agora";
+  const chips = [o.g, decadeOf(o)].filter(Boolean).map(c => "<span>" + esc(c) + "</span>").join("");
+  const linha = (l, v) => v ? "<div><dt>" + l + "</dt><dd>" + esc(v) + "</dd></div>" : "";
+  const rel = related(o);
+
+  const painel = dtab === "info"
+    ? '<dl class="dinfo">' + linha("Título", o.t) + linha("Gênero", o.g) + linha("Ano", o.y) + linha("Duração", dur(o.m)) +
+      linha("Classificação", idade(o.a)) + linha("Legendas", o.subtitles.length ? o.subtitles.map(s => s.label).join(", ") : "Não disponíveis") +
+      linha("Sinopse", o.p) + "</dl>"
+    : rel.length ? '<div class="gridv">' + rel.map(cardHTML).join("") + "</div>"
+      : '<p class="empty">Não há outros filmes para sugerir.</p>';
+
+  const tab = (id, label) => '<button class="dtab" type="button" role="tab" id="dtab-' + id + '" data-dtab="' + id +
+    '" aria-selected="' + (dtab === id) + '" aria-controls="dpanel">' + label + "</button>";
+
+  E.detail.innerHTML =
+    '<section class="hero dhero" style="' + esc(sty(o)) + '">' +
+      '<button class="dback" id="dback" type="button" data-dback aria-label="Voltar ao catálogo">' + IC.back + "</button>" +
+      '<div class="hero-art"></div>' +
+      '<div class="hero-body"><h1>' + esc(o.t) + "</h1>" +
+        '<div class="dmeta"><span class="age" data-a="' + esc(o.a) + '" title="Classificação: ' + esc(idade(o.a)) + '">' + esc(o.a) + "</span>" +
+          "<span>" + dur(o.m) + "</span>" + (o.y ? "<span>" + esc(o.y) + "</span>" : "") + "</div>" +
+        '<button class="watch dwatch" id="dplay" type="button" data-play="' + k + '" aria-label="' + acao + ": " + esc(o.t) + '">' + IC.playFill(22) + acao + "</button>" +
+        '<div class="dmini">' +
+          '<button type="button" id="dfav" data-fav="' + k + '" aria-pressed="' + f + '">' + (f ? IC.check : IC.plus) + "<span>Minha lista</span></button>" +
+          '<button type="button" id="drate" data-rate="' + k + '" aria-pressed="' + liked + '">' + IC.thumb + "<span>" + (liked ? "Gostei" : "Avaliar") + "</span></button>" +
+        "</div>" +
+        '<p class="syn">' + esc(o.p) + "</p>" +
+        (chips ? '<div class="chips">' + chips + "</div>" : "") +
+      "</div>" +
+    "</section>" +
+    '<div class="dtabs" role="tablist" aria-label="Mais sobre o filme">' + tab("like", "Você pode gostar também") + tab("info", "Detalhes") + "</div>" +
+    '<div class="dpanel" id="dpanel" role="tabpanel" aria-labelledby="dtab-' + dtab + '">' + painel + "</div>";
+
+  E.detail.hidden = false;
+  if (keep) { const n = document.getElementById(keep); if (n) n.focus({ preventScroll: true }); }
+}
+
+function openDetail(o) {
+  if (!o) return;
+  if (!detailKey) homeScroll = scrollY;     // lembra onde estava no catálogo
+  detailKey = o.key;
+  dtab = "like";
+  closePops();
+  renderAll();
+  scrollTo({ top: 0 });
+  const b = document.getElementById("dplay");
+  if (b) b.focus({ preventScroll: true });
+}
+
+function closeDetail() {
+  if (!detailKey) return;
+  const key = detailKey;
+  detailKey = "";
+  renderAll();
+  scrollTo({ top: homeScroll });
+  const card = document.querySelector('.open[data-open="' + CSS.escape(key) + '"]');
+  if (card) card.focus({ preventScroll: true });
+}
+
+function toggleLike(key) {
+  likes.has(key) ? likes.delete(key) : likes.add(key);
+  saveLikes();
+  renderDetail();
+}
+
 function renderDrawer() {
   const genres = [...new Set(M.map(o => o.g).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const decades = [...new Set(M.map(decadeOf).filter(Boolean))].sort((a, b) => decadeNum(a) - decadeNum(b));
@@ -353,12 +449,12 @@ function renderDrawer() {
     "<h3>Gêneros</h3>" + genres.map(g => item(g)).join("") + "<h3>Décadas</h3>" + decades.map(d => item(d)).join("") + "</nav>";
 }
 
-function renderAll() { renderDrawer(); renderHero(); renderRows(); }
+function renderAll() { renderDrawer(); renderHero(); renderRows(); renderDetail(); }
 
 /* =========================================================
    7. FOCO, MENU LATERAL, BUSCA, PERFIL E CARTÕES
    ========================================================= */
-const BG = ["#top", "#hero", "#rows", "footer"];    // áreas desativadas enquanto um painel está aberto
+const BG = ["#top", "#hero", "#rows", "#detail", "footer"];    // áreas desativadas enquanto um painel está aberto
 const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
 const setInert = (sels, on) => sels.forEach(s => { const n = $(s); if (n) n.inert = on; });
 
@@ -404,6 +500,7 @@ function closeSearch() {
 }
 function setFilter(c) {
   filter = c; q = ""; sortBy = "";
+  detailKey = "";            // sair da página de detalhes
   E.q.value = "";
   closeSearch();
   renderAll();
@@ -435,7 +532,7 @@ function closeProfile(restoreFocus) {
 }
 
 function exportarDados() {
-  const dados = { app: "CineNoite", versao: 2, exportadoEm: new Date().toISOString(), lista: [...favs], progresso: prog };
+  const dados = { app: "CineNoite", versao: 2, exportadoEm: new Date().toISOString(), lista: [...favs], curtidos: [...likes], progresso: prog };
   const url = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 2)], { type: "application/json" }));
   const a = document.createElement("a");
   a.href = url;
@@ -453,10 +550,11 @@ async function importarDados(file) {
     const d = JSON.parse(await file.text());
     if (!d || d.app !== "CineNoite") throw new Error("formato desconhecido");
     limparFavs(d.lista).forEach(k => favs.add(k));
+    limparFavs(d.curtidos).forEach(k => likes.add(k));
     for (const [k, v] of Object.entries(limparProg(d.progresso))) {
       if (!prog[k] || v.u > prog[k].u) prog[k] = v;
     }
-    saveFavs(); saveProg(); renderAll();
+    saveFavs(); saveLikes(); saveProg(); renderAll();
     toast("Dados importados.");
   } catch {
     toast("Arquivo inválido. Use um arquivo exportado pelo CineNoite.");
@@ -476,8 +574,8 @@ const ACOES = {
   },
   clearAll() {
     if (!confirm("Apagar progresso, lista e preferências deste navegador?")) return;
-    prog = Object.create(null); favs = new Set();
-    [K.prog, K.favs, K.sub, K.subsz, K.legProg, K.legFavs].forEach(store.del);
+    prog = Object.create(null); favs = new Set(); likes = new Set();
+    [K.prog, K.favs, K.likes, K.sub, K.subsz, K.legProg, K.legFavs].forEach(store.del);
     szi = 1; applySz(); renderAll(); toast("Dados locais apagados.");
   }
 };
@@ -495,6 +593,7 @@ document.addEventListener("click", e => {
   const c = t.closest("[data-c]"), o = t.closest("[data-open]"), f = t.closest("[data-fav]");
   const kb = t.closest("[data-kb]"), ar = t.closest("[data-arr]"), dt = t.closest("[data-dot]");
   const rd = t.closest("[data-rand]"), dc = t.closest("[data-dclose]"), cl = t.closest("[data-clear]");
+  const pl = t.closest("[data-play]"), rt = t.closest("[data-rate]"), dtb = t.closest("[data-dtab]"), db = t.closest("[data-dback]");
   if (!kb && !t.closest(".pop")) closePops();
   if (!t.closest(".pwrap")) closeProfile();
 
@@ -504,7 +603,7 @@ document.addEventListener("click", e => {
     closeDrawer();
     const pool = M.filter(x => !watched(x));
     const L = pool.length ? pool : M;
-    openMovie(L[Math.floor(Math.random() * L.length)]);
+    openDetail(L[Math.floor(Math.random() * L.length)]);
   }
   else if (kb) {
     const p = kb.nextElementSibling, abrir = p.hidden;
@@ -518,7 +617,11 @@ document.addEventListener("click", e => {
     r.scrollBy({ left: ar.dataset.arr * r.clientWidth * .85, behavior: "smooth" });
   }
   else if (dt) { hi = +dt.dataset.dot; renderHero(); startHero(); }
-  else if (o) openMovie(byKey.get(o.dataset.open));
+  else if (pl) openMovie(byKey.get(pl.dataset.play));       // botão "Assistir agora" da página de detalhes
+  else if (rt) toggleLike(rt.dataset.rate);
+  else if (dtb) { dtab = dtb.dataset.dtab; renderDetail(); }
+  else if (db) closeDetail();
+  else if (o) { openDetail(byKey.get(o.dataset.open)); }   // clicar num filme abre os detalhes, não o player
 });
 
 document.addEventListener("change", e => {
@@ -538,7 +641,7 @@ E.searchBtn.onclick = () => {
   E.searchBtn.setAttribute("aria-expanded", String(open));
   if (open) E.q.focus(); else { E.q.value = ""; q = ""; renderAll(); }
 };
-E.q.addEventListener("input", e => { q = e.target.value; renderAll(); });
+E.q.addEventListener("input", e => { q = e.target.value; detailKey = ""; renderAll(); });
 E.q.addEventListener("keydown", e => {
   if (e.key === "Escape") { E.q.value = ""; q = ""; closeSearch(); renderAll(); E.searchBtn.focus(); }
 });
@@ -870,7 +973,8 @@ function openMovie(o) {
 
 function restoreFocus() {
   const card = cur && document.querySelector('[data-open="' + CSS.escape(cur.key) + '"]');
-  for (const n of [lastFocus, card, E.menuBtn]) {
+  // A página de detalhes é refeita ao fechar o player, então o botão antigo já não existe: procura o novo.
+  for (const n of [lastFocus, document.getElementById("dplay"), card, E.menuBtn]) {
     if (n && n.isConnected && n.getClientRects().length) { n.focus(); if (document.activeElement === n) return; }
   }
 }
@@ -885,7 +989,7 @@ function closeMovie() {
   keepControlsVisible();
   E.modal.classList.remove("open");
   setInert(BG, false);
-  renderAll();            // atualiza barras de progresso e "Continuar assistindo"
+  renderAll();            // atualiza barras de progresso, "Continuar" e a página de detalhes
   restoreFocus();
 }
 
@@ -1021,7 +1125,8 @@ document.addEventListener("keydown", e => {
     if (!E.profileMenu.hidden) closeProfile(true);
     else if (modalOpen) closeMovie();
     else if (drawerOpen) closeDrawer();
-    else closePops(true);
+    else if (document.querySelector(".pop:not([hidden])")) closePops(true);
+    else if (detailKey) closeDetail();
     return;
   }
   if (drawerOpen) { trapTab(e, E.drawer); return; }
