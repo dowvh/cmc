@@ -2,11 +2,13 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { Transform } = require("stream");
 const { GoogleAuth } = require("google-auth-library");
 
 const app = express();
 app.disable("x-powered-by");
+app.set("trust proxy", 1);   // o Render fica atrás de um proxy: necessário para enxergar o IP real
 const PORT = Number(process.env.PORT) || 3000;
 
 // Tempo máximo esperando o Google Drive começar a responder (o streaming em si não tem limite).
@@ -48,17 +50,58 @@ const auth = new GoogleAuth({
 const ID_VALIDO = /^[A-Za-z0-9_-]{15,80}$/;
 
 // ---------------------------------------------------------------
-// ALLOWED_ORIGIN: "*" (padrão) ou uma lista de origens separadas por vírgula,
-// ex.: https://dowvh.github.io,http://localhost:5500
+// Assinatura dos links de vídeo
+// SIGN_SECRET: segredo longo (32+ caracteres), só existe aqui (variável de ambiente do Render)
+// e no cn-auth.js do PC. Nunca vai para o navegador nem para o GitHub.
+// TTL_MIN: validade do link em minutos (padrão 180).
+// ---------------------------------------------------------------
+const SEGREDO = String(process.env.SIGN_SECRET || "");
+const TTL_S = (Number(process.env.TTL_MIN) || 180) * 60;
+
+if (SEGREDO.length < 32) {
+  console.error("Defina a variável SIGN_SECRET com pelo menos 32 caracteres.");
+  process.exit(1);
+}
+
+const assinatura = (caminho, e) =>
+  crypto.createHmac("sha256", SEGREDO).update(caminho + "\n" + e).digest("base64url");
+
+function assinaturaConfere(caminho, e, s) {
+  e = Number(e);
+  if (!Number.isSafeInteger(e) || e < Date.now() / 1000) return false;
+  if (typeof s !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(s)) return false;
+  const a = Buffer.from(assinatura(caminho, e));
+  const b = Buffer.from(s);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Limite de pedidos de assinatura por IP (janela de 60 s).
+const janela = new Map();
+function limitar(ip, max = 120) {
+  const agora = Date.now();
+  const lista = (janela.get(ip) || []).filter(t => agora - t < 60000);
+  lista.push(agora);
+  janela.set(ip, lista);
+  return lista.length <= max;
+}
+setInterval(() => {
+  const agora = Date.now();
+  for (const [ip, l] of janela) if (!l.some(t => agora - t < 60000)) janela.delete(ip);
+}, 60000).unref();
+
+// ---------------------------------------------------------------
+// ALLOWED_ORIGIN: lista de origens separadas por vírgula, ex.: https://dowvh.github.io,http://localhost:5500
+// Agora é OBRIGATÓRIO listar o site: só ele pode pedir links assinados.
 // Valores inválidos derrubam o servidor na partida (melhor do que rodar aberto sem querer).
 // ---------------------------------------------------------------
 function lerOrigensPermitidas(valor) {
-  const bruto = String(valor || "*").trim();
-  if (bruto === "*") {
-    if (process.env.NODE_ENV === "production") {
-      console.warn("Aviso: ALLOWED_ORIGIN não definido; qualquer site pode usar a rota /media.");
-    }
-    return { qualquer: true, lista: new Set() };
+  const bruto = String(valor || "").trim();
+  if (!bruto || bruto === "*") {
+    console.error(
+      "Defina ALLOWED_ORIGIN com o endereço do site (ex.: https://dowvh.github.io). " +
+        "Sem isso, qualquer site poderia pedir links de vídeo."
+    );
+    process.exit(1);
   }
 
   const lista = new Set();
@@ -78,10 +121,10 @@ function lerOrigensPermitidas(valor) {
   }
 
   if (!lista.size) {
-    console.error("ALLOWED_ORIGIN está vazio. Use * ou uma lista de origens.");
+    console.error("ALLOWED_ORIGIN está vazio. Liste as origens do site.");
     process.exit(1);
   }
-  return { qualquer: false, lista };
+  return lista;
 }
 
 const ORIGENS = lerOrigensPermitidas(process.env.ALLOWED_ORIGIN);
@@ -145,19 +188,51 @@ app.get("/saude", (req, res) => {
 });
 
 // ---------------------------------------------------------------
+// POST /sign — o site pede um link assinado e temporário para um vídeo do Drive.
+// Só responde para as origens de ALLOWED_ORIGIN (o navegador envia o cabeçalho Origin).
+// Observação: um programa fora do navegador consegue forjar o Origin.
+// ---------------------------------------------------------------
+app.use("/sign", (req, res, next) => {
+  const origem = req.headers.origin;
+  const permitida = !!origem && ORIGENS.has(origem);
+
+  res.setHeader("Cache-Control", "no-store");
+  if (permitida) {
+    res.setHeader("Access-Control-Allow-Origin", origem);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Max-Age", "600");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(permitida ? 204 : 403);
+  if (!permitida) return res.status(403).json({ erro: "origem não permitida" });
+  next();
+});
+
+app.post("/sign", express.json({ limit: "2kb" }), (req, res) => {
+  if (!limitar(req.ip)) return res.status(429).json({ erro: "muitos pedidos" });
+
+  const id = req.body && req.body.drive;
+  if (typeof id !== "string" || !ID_VALIDO.test(id)) {
+    return res.status(400).json({ erro: "arquivo inválido" });
+  }
+
+  const base = (process.env.PUBLIC_URL || "https://" + req.get("host")).replace(/\/+$/, "");
+  const caminho = "/media/" + id;
+  const e = Math.floor(Date.now() / 1000) + TTL_S;
+  res.json({ url: base + caminho + "?e=" + e + "&s=" + assinatura(caminho, e) });
+});
+
+// ---------------------------------------------------------------
 // CORS da rota de vídeo.
 // Observação: o <video src> comum não usa CORS, então isto só protege acessos via fetch/XHR.
 // ---------------------------------------------------------------
 app.use("/media", (req, res, next) => {
   const origem = req.headers.origin;
-  const permitida = ORIGENS.qualquer || (origem && ORIGENS.lista.has(origem));
+  const permitida = !!origem && ORIGENS.has(origem);
 
-  if (ORIGENS.qualquer) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  } else {
-    res.setHeader("Vary", "Origin");
-    if (permitida) res.setHeader("Access-Control-Allow-Origin", origem);
-  }
+  res.setHeader("Vary", "Origin");
+  if (permitida) res.setHeader("Access-Control-Allow-Origin", origem);
 
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Range");
@@ -280,13 +355,17 @@ function createRangeStream(source, start, length) {
 }
 
 // ---------------------------------------------------------------
-// Streaming do Drive
+// Streaming do Drive (só com link assinado e dentro da validade)
 // ---------------------------------------------------------------
 app.get("/media/:id", async (req, res) => {
   const id = req.params.id;
 
   if (!ID_VALIDO.test(id)) {
     return res.status(404).send("Filme não encontrado");
+  }
+
+  if (!assinaturaConfere("/media/" + id, req.query.e, req.query.s)) {
+    return res.status(403).send("Link inválido ou expirado");
   }
 
   const range = normalizarRange(req.headers.range);
@@ -450,6 +529,8 @@ app.use((req, res) => {
 app.use((error, req, res, next) => {
   console.error("Erro:", error && error.message);
   if (res.headersSent) return next(error);
+  const status = Number(error && error.status);
+  if (status >= 400 && status < 500) return res.status(status).send("Pedido inválido");
   res.status(500).send("Erro interno");
 });
 
