@@ -16,6 +16,7 @@ const CONFIG = {
   // Link da planilha publicada (https://docs.google.com/...). "" = usa só catalogo.js.
   // Colunas: id, titulo, genero, ano, minutos, idade, cor, sinopse, capa, legenda, drive, video
   // Colunas opcionais para filme em duas partes: video2, drive2, legenda2
+  // Colunas opcionais de diretor e 720p: diretor, video720, drive720 (e video2_720, drive2_720 para a Parte 2)
   planilha: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZSLOiscliA71tkQolLK0tbhHi5HAM7sIikyf9-zmk2DS9xa7Q1IyNJ2W34xXDirwGylclVWgRAzuJ/pub?gid=1090910520&single=true&output=csv"
 };
 
@@ -101,7 +102,7 @@ const extrairDriveId = u => {
 /* =========================================================
    3. ARMAZENAMENTO LOCAL (progresso, lista, preferências)
    ========================================================= */
-const K = { prog: "cn-prog-v2", favs: "cn-favs-v2", likes: "cn-likes-v2", sub: "cn-sub", subsz: "cn-subsz", legProg: "cn-prog", legFavs: "cn-favs" };
+const K = { prog: "cn-prog-v2", favs: "cn-favs-v2", likes: "cn-likes-v2", sub: "cn-sub", subsz: "cn-subsz", q: "cn-q", legProg: "cn-prog", legFavs: "cn-favs" };
 
 const store = {
   get(k, fb) { try { const v = localStorage.getItem(k); return v === null ? fb : JSON.parse(v); } catch { return fb; } },
@@ -146,6 +147,8 @@ const inProgress = o => { const p = pct(o); return p > .02 && p < .95; };
 const watched = o => pct(o) >= .95;
 
 const subPref = () => store.get(K.sub, 1) !== 0;
+// Qualidade preferida (1080 é o padrão). Só vale nos filmes/partes que tiverem 720p cadastrado.
+let quality = store.get(K.q, 1080) === 720 ? 720 : 1080;
 let szi = (() => { const r = store.get(K.subsz, 1); return Number.isInteger(r) && SUBSZ[r] ? r : 1; })();
 
 /* =========================================================
@@ -154,6 +157,20 @@ let szi = (() => { const r = store.get(K.subsz, 1); return Number.isInteger(r) &
 let M = [];
 let byKey = new Map();
 const MAXPARTES = 2;
+const MAXDIR = 4;
+
+// Diretores: separados por vírgula, ponto e vírgula ou "|" (máx. 4, sem repetir).
+const listaDiretores = v => [...new Set(String(v ?? "").split(/[;,|]/).map(s => s.trim().replace(/\s+/g, " ").slice(0, 80)).filter(Boolean))].slice(0, MAXDIR);
+
+// Versão 720p de uma fonte (arquivo no PC / link https / ID do Drive). Vazia se não houver.
+function alt720(video, drive) {
+  const d = extrairDriveId(drive);
+  return { src: videoUrl(video), driveId: DRIVE_ID.test(d) ? d : "" };
+}
+const has720 = s => !!(s && s.alt720 && (s.alt720.src || s.alt720.driveId));
+const hasAny720 = o => o.parts.length ? o.parts.some(has720) : has720(o);
+// Endereço final de uma fonte (com token do Caddy ou via servidor do Drive).
+const urlFonte = s => s.src ? mediaUrl(s.src) : (s.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(s.driveId) : "");
 
 // Uma parte. Na planilha as chaves sempre existem (podem estar vazias).
 // No catalogo.js, se "video"/"legenda" nem existir, usa o nome padrão <id>-p1.mp4 etc.
@@ -166,7 +183,7 @@ function normalizarParte(p, base, n) {
   const subtitles = [];
   const leg = relUrl(CONFIG.legendas, legenda);
   if (leg) subtitles.push({ src: leg, lang: "pt-BR", label: "Português" });
-  return { src: videoUrl(video), driveId: DRIVE_ID.test(drive) ? drive : "", subtitles };
+  return { src: videoUrl(video), driveId: DRIVE_ID.test(drive) ? drive : "", subtitles, alt720: alt720(p.video720, p.drive720) };
 }
 
 // Converte qualquer item (catalogo.js ou planilha) no formato interno, validando todos os links.
@@ -190,6 +207,8 @@ function normalizar(r) {
     img: SCHEME.test(capa) ? httpsUrl(capa) : relUrl(CONFIG.capas, capa),
     src: videoUrl(r.video),
     driveId: DRIVE_ID.test(drive) ? drive : "",
+    alt720: alt720(r.video720, r.drive720),
+    dirs: listaDiretores(r.dir),
     subtitles: [],
     parts: []
   };
@@ -338,7 +357,7 @@ function visible() {
     filter === "Todos" ||
     (filter === "Minha lista" ? favs.has(o.key) :
       filter.startsWith("Década de ") ? decadeOf(o) === filter : o.g === filter)
-  ) && norm(o.t + " " + o.g + " " + o.y).includes(norm(q)));
+  ) && norm(o.t + " " + o.g + " " + o.y + " " + o.dirs.join(" ")).includes(norm(q)));
   if (SORTS[sortBy]) L.sort(SORTS[sortBy]);
   return L;
 }
@@ -386,13 +405,14 @@ function renderRows() {
 
 /* --- Página de detalhes (aparece ao clicar num filme, antes do player) --- */
 
-// Filmes parecidos: mesmo gênero primeiro, depois mesma década, depois o ano mais próximo.
+// Filmes parecidos: mesmo diretor primeiro, depois mesmo gênero, depois mesma década, depois o ano mais próximo.
 function related(o, n = 12) {
-  const y = Number(o.y) || 0;
+  const y = Number(o.y) || 0, dn = o.dirs.map(norm);
   return M.filter(x => x.key !== o.key)
     .map(x => {
       const xy = Number(x.y) || 0;
-      const score = (x.g && x.g === o.g ? 2 : 0) + (y && xy && Math.floor(xy / 10) === Math.floor(y / 10) ? 1 : 0);
+      const mesmoDir = dn.length && x.dirs.some(d => dn.includes(norm(d)));
+      const score = (mesmoDir ? 3 : 0) + (x.g && x.g === o.g ? 2 : 0) + (y && xy && Math.floor(xy / 10) === Math.floor(y / 10) ? 1 : 0);
       return { x, score, d: y && xy ? Math.abs(xy - y) : 999 };
     })
     .sort((a, b) => b.score - a.score || a.d - b.d)
@@ -413,6 +433,9 @@ function renderDetail() {
   const linha = (l, v) => v ? "<div><dt>" + l + "</dt><dd>" + esc(v) + "</dd></div>" : "";
   const rel = related(o);
   const legs = [...new Set(o.subtitles.map(s => s.label))];
+  const dirTxt = o.dirs.join(", ");
+  const n720 = np ? o.parts.filter(has720).length : (has720(o) ? 1 : 0);
+  const qTxt = !n720 ? "" : (np && n720 < np ? "1080p; 720p só em algumas partes" : "1080p e 720p");
 
   // Botões "Parte 1 / Parte 2" (só para filmes configurados com partes na planilha).
   const partesHTML = np ? '<div class="dparts" role="group" aria-label="Escolher a parte do filme">' +
@@ -424,8 +447,8 @@ function renderDetail() {
     }).join("") + "</div>" : "";
 
   const painel = dtab === "info"
-    ? '<dl class="dinfo">' + linha("Título", o.t) + linha("Gênero", o.g) + linha("Ano", o.y) + linha("Duração", dur(o.m)) +
-      linha("Partes", np ? np + " (Parte 1 e Parte 2)" : "") +
+    ? '<dl class="dinfo">' + linha("Título", o.t) + linha("Direção", dirTxt) + linha("Gênero", o.g) + linha("Ano", o.y) + linha("Duração", dur(o.m)) +
+      linha("Partes", np ? np + " (Parte 1 e Parte 2)" : "") + linha("Qualidade", qTxt) +
       linha("Classificação", idade(o.a)) + linha("Legendas", legs.length ? legs.join(", ") : "Não disponíveis") +
       linha("Sinopse", o.p) + "</dl>"
     : rel.length ? '<div class="gridv">' + rel.map(cardHTML).join("") + "</div>"
@@ -439,6 +462,7 @@ function renderDetail() {
       '<button class="dback" id="dback" type="button" data-dback aria-label="Voltar ao catálogo">' + IC.back + "</button>" +
       '<div class="hero-art"></div>' +
       '<div class="hero-body"><h1>' + esc(o.t) + "</h1>" +
+        (dirTxt ? '<div class="ddir">Direção: <b>' + esc(dirTxt) + "</b></div>" : "") +
         '<div class="dmeta"><span class="age" data-a="' + esc(o.a) + '" title="Classificação: ' + esc(idade(o.a)) + '">' + esc(o.a) + "</span>" +
           "<span>" + dur(o.m) + "</span>" + (o.y ? "<span>" + esc(o.y) + "</span>" : "") + "</div>" +
         '<button class="watch dwatch" id="dplay" type="button" data-play="' + k + '" aria-label="' + acao + ": " + esc(o.t) + '">' + IC.playFill(22) + acao + "</button>" +
@@ -624,8 +648,8 @@ const ACOES = {
   clearAll() {
     if (!confirm("Apagar progresso, lista e preferências deste navegador?")) return;
     prog = Object.create(null); favs = new Set(); likes = new Set();
-    [K.prog, K.favs, K.likes, K.sub, K.subsz, K.legProg, K.legFavs].forEach(store.del);
-    szi = 1; applySz(); renderAll(); toast("Dados locais apagados.");
+    [K.prog, K.favs, K.likes, K.sub, K.subsz, K.q, K.legProg, K.legFavs].forEach(store.del);
+    szi = 1; quality = 1080; applySz(); renderAll(); toast("Dados locais apagados.");
   }
 };
 
@@ -722,7 +746,7 @@ addEventListener("scroll", () => E.top.classList.toggle("solid", scrollY > 40), 
 /* =========================================================
    8. PLAYER
    ========================================================= */
-let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null, curPart = 0;
+let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null, curPart = 0, curQ = 1080;
 let controlsTimer = 0, seekWatch = 0, isSeeking = false, seekPointerId = null, pendingSeekTime = null;
 
 /* --- Controles visíveis / escondidos --- */
@@ -774,10 +798,11 @@ function mostrarErro(v) {
     code === 3 ? "O navegador não conseguiu decodificar este arquivo (formato ou codec)." :
     code === 4 ? "Não achei o vídeo neste endereço, ele está bloqueado ou o formato não é compatível." :
     "O servidor não conseguiu entregar o vídeo.";
+  const dica = curQ === 720 ? " Se o 720p não existir, volte para 1080p no botão de qualidade." : "";
   const link = v.currentSrc || v.src || "";
   let host = "";
   try { host = new URL(link).hostname; } catch { /* sem host */ }
-  setStatus(detalhe + " (código " + (code || "?") + (host ? ", servidor " + host : "") + ")", { link, retry: true });
+  setStatus(detalhe + dica + " (código " + (code || "?") + (host ? ", servidor " + host : "") + ")", { link, retry: true });
   console.warn("Erro no vídeo:", cur && cur.t, "código", code, link);
 }
 
@@ -906,7 +931,22 @@ function syncParts() {
   });
 }
 
-function loadVideo(o, resumeAt) {
+// Botão de qualidade (1080p/720p): só aparece se o filme tiver 720p em alguma parte.
+function syncQuality() {
+  const any = !!cur && hasAny720(cur);
+  E.qual.hidden = !any;
+  if (!any) return;
+  const ok = has720(fonte(cur, curPart));
+  E.qual.textContent = curQ + "p";
+  E.qual.disabled = !ok;
+  const label = ok ? "Qualidade: " + curQ + "p. Alternar para " + (curQ === 720 ? 1080 : 720) + "p"
+    : "Qualidade: 1080p. O 720p não está disponível" + (cur.parts.length ? " nesta parte" : "");
+  E.qual.setAttribute("aria-label", label);
+  E.qual.title = label;
+}
+
+// msg (opcional): texto de status depois de carregar (ex.: "Qualidade: 720p").
+function loadVideo(o, resumeAt, msg) {
   unloadVideo();
   resetTransient();
   playing = false;
@@ -921,9 +961,13 @@ function loadVideo(o, resumeAt) {
 
   // Arquivo direto (com token se for do seu PC) ou vídeo do Drive via Render. Com partes, usa a parte atual.
   const fo = fonte(o, curPart);
-  const url = fo.src ? mediaUrl(fo.src) : (fo.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(fo.driveId) : "");
+  const use720 = quality === 720 && has720(fo);      // 720p só se esta parte tiver
+  const base = use720 ? fo.alt720 : fo;
+  curQ = use720 ? 720 : 1080;
+  syncQuality();
+  const url = urlFonte(base);
   if (!url) {
-    setStatus(fo.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado."
+    setStatus(base.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado."
       : o.parts.length ? "Esta parte ainda não está disponível." : "Este filme ainda não está disponível.");
     E.mr.hidden = true;
     ui();
@@ -982,8 +1026,8 @@ function loadVideo(o, resumeAt) {
     setStatus("");
     if (startAt > 0) {
       try { v.currentTime = Math.min(startAt, Math.max(0, v.duration - 1)); } catch { /* ignora */ }
-      setStatus(o.parts.length ? "Retomando a Parte " + (curPart + 1) + " em " + fmt(startAt) + "…" : "Retomando de " + fmt(startAt) + "…");
-    }
+      setStatus(msg || (o.parts.length ? "Retomando a Parte " + (curPart + 1) + " em " + fmt(startAt) + "…" : "Retomando de " + fmt(startAt) + "…"));
+    } else if (msg) setStatus(msg);
     ui();
   });
   v.addEventListener("error", () => {
@@ -1039,6 +1083,19 @@ function avancarParte() {
   saveProg();
   trocarParte(curPart + 1, true);
   toast("Continuando na Parte " + (curPart + 1) + ".");
+}
+
+// Troca 1080p <-> 720p mantendo o ponto atual e o estado (tocando/pausado).
+function trocarQualidade(q) {
+  if (!cur || q === curQ) return;
+  if (q === 720 && !has720(fonte(cur, curPart))) return;
+  const t = vid && Number.isFinite(vid.currentTime) ? vid.currentTime : undefined;
+  const was = !!vid && !vid.paused && !vid.ended;
+  saveNow();
+  quality = q;
+  store.set(K.q, q);
+  loadVideo(cur, t, "Qualidade: " + q + "p");
+  if (was) setPlay(true);
 }
 
 function retryVideo() {
@@ -1203,6 +1260,7 @@ E.mr.onclick = () => {
   E.mr.hidden = true;
   setPlay(true);
 };
+E.qual.onclick = () => { showControls(); trocarQualidade(curQ === 720 ? 1080 : 720); };
 E.pseg.addEventListener("click", e => {
   const b = e.target.closest("[data-pt]");
   if (!b) return;
@@ -1285,8 +1343,8 @@ function filmesDaPlanilha(csv) {
     // A Parte 1 usa as colunas video/drive/legenda; a Parte 2 usa video2/drive2/legenda2.
     const v2 = col(r, "video2"), d2 = col(r, "drive2");
     const partes = (v2 || d2) ? [
-      { video: col(r, "video"), drive: col(r, "drive"), legenda: col(r, "legenda") },
-      { video: v2, drive: d2, legenda: col(r, "legenda2") }
+      { video: col(r, "video"), drive: col(r, "drive"), legenda: col(r, "legenda"), video720: col(r, "video720"), drive720: col(r, "drive720") },
+      { video: v2, drive: d2, legenda: col(r, "legenda2"), video720: col(r, "video2_720"), drive720: col(r, "drive2_720") }
     ] : undefined;
     return normalizar({
       id: col(r, "id"), t,
@@ -1295,6 +1353,8 @@ function filmesDaPlanilha(csv) {
       x: (20 + hueOf(t + "x") % 60) + "%",
       p: col(r, "sinopse"),
       capa: col(r, "capa"), legenda: col(r, "legenda"), drive: col(r, "drive"), video: col(r, "video"),
+      video720: col(r, "video720"), drive720: col(r, "drive720"),
+      dir: col(r, "diretor") || col(r, "diretores") || col(r, "direcao"),
       partes
     });
   }).filter(Boolean);
