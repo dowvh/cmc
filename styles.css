@@ -148,6 +148,7 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 .ic{border:0;background:none;color:#fff;padding:4px;display:grid;place-items:center}
 .ic:hover{opacity:.8}
 .spd{font-size:.82rem;font-weight:600;padding:3px 8px;border:1px solid #ffffff59;border-radius:4px;background:none;color:#fff}
+.spd:disabled{opacity:.45;cursor:not-allowed}
 .cc{position:relative;width:34px;height:34px;display:grid;place-items:center;color:#fff}
 .cc:has(#subtitle[hidden]){display:none}
 .cc:focus-within{outline:2px solid #fff;outline-offset:2px;border-radius:4px}
@@ -166,9 +167,9 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 .screen:not(.controls-hidden) .subs{bottom:210px}
 .ctl{padding:40px 16px calc(14px + env(safe-area-inset-bottom,0px))}
 .trow h2{font-size:1.15rem}
-.brow{grid-template-columns:1fr auto}
+.brow{grid-template-columns:minmax(0,1fr) auto}
 .bc{grid-column:1/-1;order:-1;justify-content:center;gap:34px;margin-bottom:4px}
-.br{gap:14px}
+.br{gap:10px}
 .bl .btn{font-size:.82rem;padding:6px}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -185,6 +186,8 @@ footer{margin:30px var(--pad) 0;padding:24px 0 32px;border-top:1px solid var(--l
 .dhero h1{font-size:clamp(2.5rem,6vw,5.2rem);text-transform:none;line-height:.98;text-shadow:0 2px 20px #0009}
 .dback{position:absolute;top:calc(88px + env(safe-area-inset-top,0px));left:var(--pad);z-index:5;display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1px solid #ffffff55;border-radius:4px;background:#08090bbd;color:#fff;font-weight:600}
 .dback:hover{background:#ffffff26}
+.ddir{margin:0;color:#e4e4e8;font-size:1rem}
+.ddir b{font-weight:600;color:#fff}
 .dmeta{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin:18px 0 22px;color:#eee;font-size:.96rem}
 .dmeta>span{display:inline-flex;align-items:center}
 .dmeta .age{min-width:30px;justify-content:center;padding:2px 7px;border:1px solid #ffffffa6;border-radius:3px;font-weight:700;font-size:.82rem}
