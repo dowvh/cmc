@@ -9,10 +9,9 @@ const CONFIG = {
   legendas: "legendas/",
   // Servidor do Render (só para filmes que ainda usam "drive"). Deixe "" quando migrar o último.
   mediaBase: "https://cmc-3ke1.onrender.com",
-  // Servidor de vídeos do seu PC (Caddy + Tailscale Funnel).
-  // O token precisa ser IGUAL ao "t=..." do Caddyfile. Atenção: ele fica visível no código da página.
+  // Servidor de vídeos do seu PC (Caddy + Tailscale Funnel + cn-auth.js).
+  // Nenhum segredo fica neste arquivo: o site pede ao servidor um link assinado e temporário (ver assinar()).
   tsHost: "desktop-g2jklud.taile9cab4.ts.net",
-  token: "CN-8fK2mQ9xT7vP4zR6wB3nL5",
   // Link da planilha publicada (https://docs.google.com/...). "" = usa só catalogo.js.
   // Colunas: id, titulo, genero, ano, minutos, idade, cor, sinopse, capa, legenda, drive, video
   // Colunas opcionais para filme em duas partes: video2, drive2, legenda2
@@ -82,15 +81,6 @@ function videoUrl(v) {
   if (SCHEME.test(v)) return httpsUrl(v);
   const segs = pathSegs(v);
   return segs ? "https://" + CONFIG.tsHost + "/" + segs.join("/") : "";
-}
-
-// Acrescenta o token aos links do seu servidor (Caddy).
-function mediaUrl(u) {
-  try {
-    const x = new URL(u, location.href);
-    if (CONFIG.token && x.hostname === CONFIG.tsHost) x.searchParams.set("t", CONFIG.token);
-    return x.href;
-  } catch { return u; }
 }
 
 const extrairDriveId = u => {
@@ -169,8 +159,36 @@ function alt720(video, drive) {
 }
 const has720 = s => !!(s && s.alt720 && (s.alt720.src || s.alt720.driveId));
 const hasAny720 = o => o.parts.length ? o.parts.some(has720) : has720(o);
-// Endereço final de uma fonte (com token do Caddy ou via servidor do Drive).
-const urlFonte = s => s.src ? mediaUrl(s.src) : (s.driveId && MEDIA ? MEDIA + "/media/" + encodeURIComponent(s.driveId) : "");
+// Pede ao servidor um endereço ASSINADO e temporário para a fonte (PC ou Drive).
+// O segredo da assinatura fica só nos servidores; links de outros sites (ex.: archive.org) passam direto.
+async function assinar(s) {
+  let endpoint, corpo;
+  if (s.src) {
+    const u = new URL(s.src);
+    if (u.hostname !== CONFIG.tsHost) return s.src;
+    endpoint = "https://" + CONFIG.tsHost + "/sign";
+    corpo = { file: decodeURIComponent(u.pathname.slice(1)) };
+  } else if (s.driveId && MEDIA) {
+    endpoint = MEDIA + "/sign";
+    corpo = { drive: s.driveId };
+  } else {
+    throw new Error("sem fonte");
+  }
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(endpoint, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo), cache: "no-store", signal: ctl.signal
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const url = httpsUrl((await r.json()).url);
+    // Só aceita link do mesmo servidor que assinou.
+    if (!url || new URL(url).origin !== new URL(endpoint).origin) throw new Error("resposta inválida");
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Uma parte. Na planilha as chaves sempre existem (podem estar vazias).
 // No catalogo.js, se "video"/"legenda" nem existir, usa o nome padrão <id>-p1.mp4 etc.
@@ -746,7 +764,7 @@ addEventListener("scroll", () => E.top.classList.toggle("solid", scrollY > 40), 
 /* =========================================================
    8. PLAYER
    ========================================================= */
-let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null, curPart = 0, curQ = 1080;
+let cur = null, vid = null, playing = false, pos = 0, lastFocus = null, lastSave = 0, subTrack = null, curPart = 0, curQ = 1080, lastAuto = 0;
 let controlsTimer = 0, seekWatch = 0, isSeeking = false, seekPointerId = null, pendingSeekTime = null;
 
 /* --- Controles visíveis / escondidos --- */
@@ -796,14 +814,15 @@ function mostrarErro(v) {
   const code = v.error && v.error.code;
   const detalhe = code === 2 ? "A conexão foi interrompida." :
     code === 3 ? "O navegador não conseguiu decodificar este arquivo (formato ou codec)." :
-    code === 4 ? "Não achei o vídeo neste endereço, ele está bloqueado ou o formato não é compatível." :
+    code === 4 ? "Não achei o vídeo neste endereço, ele está bloqueado, a autorização expirou ou o formato não é compatível." :
     "O servidor não conseguiu entregar o vídeo.";
   const dica = curQ === 720 ? " Se o 720p não existir, volte para 1080p no botão de qualidade." : "";
   const link = v.currentSrc || v.src || "";
   let host = "";
   try { host = new URL(link).hostname; } catch { /* sem host */ }
-  setStatus(detalhe + dica + " (código " + (code || "?") + (host ? ", servidor " + host : "") + ")", { link, retry: true });
-  console.warn("Erro no vídeo:", cur && cur.t, "código", code, link);
+  // Não mostra o endereço assinado na tela (nem no console, sem a assinatura).
+  setStatus(detalhe + dica + " (código " + (code || "?") + (host ? ", servidor " + host : "") + ")", { retry: true });
+  console.warn("Erro no vídeo:", cur && cur.t, "código", code, link.split("?")[0]);
 }
 
 /* --- Progresso salvo (guarda também a parte atual) --- */
@@ -845,8 +864,10 @@ function ui() {
 
 function setPlay(on) {
   if (!vid) return;
-  if (!on) { vid.pause(); return; }
+  if (!on) { delete vid.dataset.want; vid.pause(); return; }
   const player = vid;
+  // Ainda aguardando o endereço assinado: toca assim que ele chegar.
+  if (!player.getAttribute("src")) { player.dataset.want = "1"; return; }
   const p = player.play();
   if (p && p.catch) p.catch(err => {
     if (vid !== player) return;
@@ -965,8 +986,7 @@ function loadVideo(o, resumeAt, msg) {
   const base = use720 ? fo.alt720 : fo;
   curQ = use720 ? 720 : 1080;
   syncQuality();
-  const url = urlFonte(base);
-  if (!url) {
+  if (!(base.src || (base.driveId && MEDIA))) {
     setStatus(base.driveId && !MEDIA ? "Este filme depende do servidor do Drive, que não está configurado."
       : o.parts.length ? "Esta parte ainda não está disponível." : "Este filme ainda não está disponível.");
     E.mr.hidden = true;
@@ -980,7 +1000,6 @@ function loadVideo(o, resumeAt, msg) {
   E.mr.hidden = !startAt;
 
   const v = document.createElement("video");
-  v.src = url;
   v.playsInline = true;
   v.setAttribute("playsinline", "");
   v.setAttribute("webkit-playsinline", "");
@@ -1032,10 +1051,13 @@ function loadVideo(o, resumeAt, msg) {
   });
   v.addEventListener("error", () => {
     if (vid !== v) return;
+    const eraTocando = playing;
     playing = false;
     resetTransient();
     ui();
     keepControlsVisible();
+    // Link assinado expirou no meio do filme: pede outro e continua de onde parou (no máx. 1x a cada 2 min).
+    if (eraTocando && v.currentTime > 1 && Date.now() - lastAuto > 120000) { lastAuto = Date.now(); retryVideo(); return; }
     mostrarErro(v);
   });
   v.addEventListener("waiting", () => { if (vid === v) setStatus("Carregando vídeo…"); });
@@ -1046,6 +1068,8 @@ function loadVideo(o, resumeAt, msg) {
   });
   v.addEventListener("volumechange", () => { if (vid === v) ui(); });
   v.addEventListener("ratechange", () => { if (vid === v) E.spd.textContent = (+v.playbackRate.toFixed(2)) + "×"; });
+
+  v.addEventListener("contextmenu", e => e.preventDefault());   // sem "Salvar vídeo como" (só dificulta; não é proteção real)
 
   // Um toque pausa/continua; dois toques: laterais pulam 10 s, centro abre tela cheia.
   let clickTimer = 0;
@@ -1065,6 +1089,18 @@ function loadVideo(o, resumeAt, msg) {
   lastSave = Date.now();
   useSub(subs.length && subPref() ? 0 : -1);
   ui();
+
+  // O vídeo só começa a carregar quando o servidor devolve o endereço assinado.
+  setStatus("Preparando o vídeo…");
+  assinar(base).then(url => {
+    if (vid !== v) return;
+    v.src = url;
+    if (v.dataset.want) { delete v.dataset.want; setPlay(true); }
+  }).catch(err => {
+    if (vid !== v) return;
+    console.warn("Falha ao obter o link assinado:", err);
+    setStatus("Não foi possível obter autorização para este vídeo. O servidor pode estar desligado.", { retry: true });
+  });
 }
 
 /* --- Trocar de parte dentro do player --- */
